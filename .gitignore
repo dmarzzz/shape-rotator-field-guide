@@ -5,8 +5,9 @@ venv/
 __pycache__/
 *.pyc
 
-# build / dist
+# build / dist (electron-builder output → published to GitHub Releases, not git)
 dist/
+apps/*/dist/
 build/
 out/
 

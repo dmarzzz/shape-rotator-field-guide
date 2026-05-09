@@ -1,0 +1,96 @@
+name: field-guide-release
+
+# Builds the Shape Rotator Field Guide installers (DMG / NSIS exe / AppImage +
+# deb) and publishes them to a GitHub Release. Triggered by pushing a
+# v-prefixed tag, e.g. `git tag v0.1.0 && git push --tags`. The version in
+# the tag must match `apps/field-guide/package.json:version` (electron-builder
+# reads from package.json, not the tag, but the tag is what triggers us).
+#
+# What ends up on the release:
+#   ShapeRotatorFieldGuide-<v>-mac-arm64.dmg + .zip
+#   ShapeRotatorFieldGuide-<v>-mac-x64.dmg + .zip
+#   ShapeRotatorFieldGuide-<v>-win-x64.exe + .zip
+#   ShapeRotatorFieldGuide-<v>-win-arm64.exe + .zip
+#   ShapeRotatorFieldGuide-<v>-linux-x64.AppImage + .deb
+#   ShapeRotatorFieldGuide-<v>-linux-arm64.AppImage + .deb
+#   latest-mac.yml / latest.yml / latest-linux.yml  (electron-updater feed)
+#
+# Code signing is intentionally OFF (no Apple Developer cert, no Windows
+# signing cert). Mac users will need to right-click → Open the first time
+# to bypass Gatekeeper; Windows users will see a SmartScreen warning. Add
+# certs later — see electron-builder docs.
+#
+# IMPORTANT: scripts/build-bundles.js regenerates apps/field-guide/src/
+# cohort-surface.json from cohort-data/ before each dist step, so the
+# packaged app always ships with the cohort surface as of the release tag.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Manual trigger for ad-hoc test builds (no release upload — pack only).
+  workflow_dispatch:
+    inputs:
+      pack-only:
+        description: "Skip publish; just build artifacts"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write   # needed to create the GitHub Release
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
+          - os: ubuntu-latest
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: install (workspaces)
+        run: npm ci
+
+      - name: regenerate cohort-surface.json from cohort-data/
+        run: npm run build:cohort
+
+      - name: build (${{ matrix.platform }})
+        run: npm run dist:${{ matrix.platform }} --workspace @shape-rotator/field-guide
+        env:
+          # electron-builder uses GH_TOKEN to upload artifacts to the
+          # release matching the pushed tag. GITHUB_TOKEN has write
+          # permission to releases via the `permissions:` block above.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Skip publish when the workflow was triggered manually with
+          # pack-only=true. Tag-triggered builds always publish.
+          EB_PUBLISH: ${{ github.event_name == 'workflow_dispatch' && inputs.pack-only && 'never' || 'onTagOrDraft' }}
+
+      - name: upload artifacts (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: field-guide-${{ matrix.platform }}
+          path: |
+            apps/field-guide/dist/*.dmg
+            apps/field-guide/dist/*.exe
+            apps/field-guide/dist/*.AppImage
+            apps/field-guide/dist/*.deb
+            apps/field-guide/dist/*.zip
+          if-no-files-found: ignore
+          retention-days: 14
