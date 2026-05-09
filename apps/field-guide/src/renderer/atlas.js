@@ -2401,12 +2401,16 @@ function drawPlaceNames(ctx) {
     if (themes.length === 0) continue;
     const [x, y] = worldToScreen(c.cx, c.cy);
     const themeText = themes.join("  ·  ");
-    ctx.font = `italic 19px "Iowan Old Style", "Hoefler Text", Georgia, "Times New Roman", serif`;
+    ctx.font = `italic 600 24px "Iowan Old Style", "Hoefler Text", Georgia, "Times New Roman", serif`;
     const w1 = ctx.measureText(themeText).width;
-    const aabb = { x: x - w1 / 2 - 4, y: y - 14, w: w1 + 8, h: 26 };
-    // Paper shadow, then ink.
-    ctx.fillStyle = "rgba(242, 235, 220, 0.85)";
-    ctx.fillText(themeText, x + 1, y + 1);
+    const aabb = { x: x - w1 / 2 - 4, y: y - 16, w: w1 + 8, h: 32 };
+    // Paper-color halo (thick stroke) THEN ink fill — gives the label a
+    // legible outline against the colored territory blobs underneath.
+    ctx.lineJoin = "round";
+    ctx.miterLimit = 2;
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = "rgba(242, 235, 220, 0.95)";
+    ctx.strokeText(themeText, x, y);
     ctx.fillStyle = INK;
     ctx.fillText(themeText, x, y);
     placed.push(aabb);
@@ -2442,15 +2446,19 @@ function drawPlaceNames(ctx) {
       // ~70% so it's clearly a softer call but still legible.
       const conf = confident ? 1.0 : 0.7;
 
-      ctx.font = `italic 17px "Iowan Old Style", "Hoefler Text", Georgia, "Times New Roman", serif`;
+      ctx.font = `italic 500 21px "Iowan Old Style", "Hoefler Text", Georgia, "Times New Roman", serif`;
       ctx.letterSpacing = "0.04em";
       const w = ctx.measureText(conceptTxt).width * 1.04;
-      const aabb = { x: x - w / 2 - 4, y: y - 11, w: w + 8, h: 22 };
+      const aabb = { x: x - w / 2 - 4, y: y - 13, w: w + 8, h: 26 };
       if (collides(aabb, placed)) continue;
-      // Paper shadow then ink, both modulated by subAlpha and conf.
+      // Paper-halo + ink, both modulated by subAlpha and conf so they
+      // crossfade in together as the user zooms in.
       ctx.globalAlpha = subAlpha * conf;
-      ctx.fillStyle = `rgba(242, 235, 220, 0.85)`;
-      ctx.fillText(conceptTxt, x + 0.6, y + 0.6);
+      ctx.lineJoin = "round";
+      ctx.miterLimit = 2;
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = `rgba(242, 235, 220, 0.92)`;
+      ctx.strokeText(conceptTxt, x, y);
       ctx.fillStyle = INK_2;
       ctx.fillText(conceptTxt, x, y);
       placed.push(aabb);
@@ -2467,7 +2475,7 @@ function drawPlaceNames(ctx) {
   const topicAlpha = smoothstep(z, 4.5, 5.5);
   if (topicAlpha > 0.02) {
     ctx.globalAlpha = topicAlpha;
-    ctx.font = `italic 500 11.5px "Berkeley Mono", "JetBrains Mono", ui-monospace, monospace`;
+    ctx.font = `italic 600 13.5px "Berkeley Mono", "JetBrains Mono", ui-monospace, monospace`;
     ctx.letterSpacing = "0.10em";
     // Sort clusters by towns desc so the most prominent claim labels first.
     const allCl = [];
@@ -2488,10 +2496,13 @@ function drawPlaceNames(ctx) {
       const txt = cl.topToken.toUpperCase();
       const w = ctx.measureText(txt).width;
       const padded = w * 1.10;
-      const aabb = { x: x - padded / 2 - 4, y: y - 7, w: padded + 8, h: 14 };
+      const aabb = { x: x - padded / 2 - 4, y: y - 8, w: padded + 8, h: 16 };
       if (collides(aabb, placed)) continue;
-      ctx.fillStyle = `rgba(242, 235, 220, ${0.74 * topicAlpha})`;
-      ctx.fillText(txt, x + 0.6, y + 0.6);
+      ctx.lineJoin = "round";
+      ctx.miterLimit = 2;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = `rgba(242, 235, 220, ${0.85 * topicAlpha})`;
+      ctx.strokeText(txt, x, y);
       ctx.fillStyle = INK_3;
       ctx.fillText(txt, x, y);
       placed.push(aabb);
@@ -2505,7 +2516,7 @@ function drawPlaceNames(ctx) {
   const closeAlpha = smoothstep(z, ZOOM_CLOSE_BAND[0], ZOOM_CLOSE_BAND[1]);
   if (closeAlpha > 0.02) {
     ctx.globalAlpha = closeAlpha;
-    ctx.font = `italic 13px "Iowan Old Style", "Hoefler Text", Georgia, "Times New Roman", serif`;
+    ctx.font = `italic 14.5px "Iowan Old Style", "Hoefler Text", Georgia, "Times New Roman", serif`;
     // Build a town list sorted by (degree desc, pageCount-of-region desc)
     // so prominent towns get to label first.
     const towns = [];
@@ -2540,10 +2551,13 @@ function drawPlaceNames(ctx) {
       ctx.moveTo(x + 4, y);
       ctx.lineTo(ox - 2, oy);
       ctx.stroke();
-      // text — paper shadow, then ink.
+      // text — paper-color halo, then ink.
       ctx.textAlign = "left";
-      ctx.fillStyle = `rgba(242, 235, 220, ${0.85 * closeAlpha})`;
-      ctx.fillText(txt, ox + 0.6, oy + 0.6);
+      ctx.lineJoin = "round";
+      ctx.miterLimit = 2;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = `rgba(242, 235, 220, ${0.92 * closeAlpha})`;
+      ctx.strokeText(txt, ox, oy);
       ctx.fillStyle = INK_2;
       ctx.fillText(txt, ox, oy);
       ctx.textAlign = "center";
