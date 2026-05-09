@@ -1,11 +1,12 @@
 {
   "name": "@shape-rotator/field-guide",
   "productName": "Shape Rotator Field Guide",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "main": "main.js",
   "type": "commonjs",
   "description": "Cohort field-guide Electron app — atlas, alchemy, network/metrics over swf-node, and a profile editor that submits PRs against the cohort-data repo.",
+  "homepage": "https://github.com/dmarzzz/shape-rotator-field-guide",
   "author": {
     "name": "Shape Rotator",
     "email": "noreply@shape-rotator.local"

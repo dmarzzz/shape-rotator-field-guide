@@ -2401,9 +2401,9 @@ function drawPlaceNames(ctx) {
     if (themes.length === 0) continue;
     const [x, y] = worldToScreen(c.cx, c.cy);
     const themeText = themes.join("  ·  ");
-    ctx.font = `italic 15px "Iowan Old Style", "Hoefler Text", Georgia, "Times New Roman", serif`;
+    ctx.font = `italic 19px "Iowan Old Style", "Hoefler Text", Georgia, "Times New Roman", serif`;
     const w1 = ctx.measureText(themeText).width;
-    const aabb = { x: x - w1 / 2 - 4, y: y - 12, w: w1 + 8, h: 22 };
+    const aabb = { x: x - w1 / 2 - 4, y: y - 14, w: w1 + 8, h: 26 };
     // Paper shadow, then ink.
     ctx.fillStyle = "rgba(242, 235, 220, 0.85)";
     ctx.fillText(themeText, x + 1, y + 1);
@@ -2442,10 +2442,10 @@ function drawPlaceNames(ctx) {
       // ~70% so it's clearly a softer call but still legible.
       const conf = confident ? 1.0 : 0.7;
 
-      ctx.font = `italic 13.5px "Iowan Old Style", "Hoefler Text", Georgia, "Times New Roman", serif`;
+      ctx.font = `italic 17px "Iowan Old Style", "Hoefler Text", Georgia, "Times New Roman", serif`;
       ctx.letterSpacing = "0.04em";
       const w = ctx.measureText(conceptTxt).width * 1.04;
-      const aabb = { x: x - w / 2 - 4, y: y - 9, w: w + 8, h: 18 };
+      const aabb = { x: x - w / 2 - 4, y: y - 11, w: w + 8, h: 22 };
       if (collides(aabb, placed)) continue;
       // Paper shadow then ink, both modulated by subAlpha and conf.
       ctx.globalAlpha = subAlpha * conf;
@@ -2467,7 +2467,7 @@ function drawPlaceNames(ctx) {
   const topicAlpha = smoothstep(z, 4.5, 5.5);
   if (topicAlpha > 0.02) {
     ctx.globalAlpha = topicAlpha;
-    ctx.font = `italic 500 9.5px "Berkeley Mono", "JetBrains Mono", ui-monospace, monospace`;
+    ctx.font = `italic 500 11.5px "Berkeley Mono", "JetBrains Mono", ui-monospace, monospace`;
     ctx.letterSpacing = "0.10em";
     // Sort clusters by towns desc so the most prominent claim labels first.
     const allCl = [];
@@ -2505,7 +2505,7 @@ function drawPlaceNames(ctx) {
   const closeAlpha = smoothstep(z, ZOOM_CLOSE_BAND[0], ZOOM_CLOSE_BAND[1]);
   if (closeAlpha > 0.02) {
     ctx.globalAlpha = closeAlpha;
-    ctx.font = `italic 11px "Iowan Old Style", "Hoefler Text", Georgia, "Times New Roman", serif`;
+    ctx.font = `italic 13px "Iowan Old Style", "Hoefler Text", Georgia, "Times New Roman", serif`;
     // Build a town list sorted by (degree desc, pageCount-of-region desc)
     // so prominent towns get to label first.
     const towns = [];
