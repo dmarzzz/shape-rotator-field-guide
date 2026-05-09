@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:*; font-src 'self' data:;" />
+    <title>shape rotator world knowledge</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "../node_modules/three/build/three.module.js",
+          "three/": "../node_modules/three/",
+          "@cosmos.gl/graph": "../node_modules/@cosmos.gl/graph/dist/index.js",
+          "@shape-rotator/shape-ui": "../../../node_modules/@shape-rotator/shape-ui/src/index.js"
+        }
+      }
+    </script>
+  </head>
+  <body data-active-tab="alchemy" data-net-sub="network">
+    <nav id="tab-bar" class="tab-bar" role="tablist" aria-label="primary view">
+      <button class="tab-btn" role="tab" data-tab="alchemy" aria-selected="true" type="button" title="cohort. feed · shapes · pulse · constellation · profile.">
+        <span class="tab-glyph" aria-hidden="true">⚗</span>
+        <span class="tab-label">alchemy</span>
+      </button>
+      <button class="tab-btn" role="tab" data-tab="atlas" aria-selected="false" type="button" title="the wall map. countries, towns, caravans. ⌘/ to search.">
+        <span class="tab-glyph" aria-hidden="true">◐</span>
+        <span class="tab-label">atlas</span>
+      </button>
+      <button class="tab-btn" role="tab" data-tab="network" aria-selected="false" type="button" title="peers, traffic, dc-net rounds, receipts. metrics is a sub-tab inside.">
+        <span class="tab-glyph" aria-hidden="true">⌬</span>
+        <span class="tab-label">network</span>
+      </button>
+      <span id="tab-indicator" class="tab-indicator" aria-hidden="true"></span>
+      <button id="atlas-search-toggle" class="atlas-search-toggle atlas-only" type="button"
+              title="search the network (⌘/)" aria-label="open search">
+        <span class="ast-glyph" aria-hidden="true">⌕</span>
+        <span class="ast-label">search</span>
+        <span class="ast-kbd" aria-hidden="true">⌘/</span>
+      </button>
+      <span class="tab-bar-foot" aria-hidden="true">v0.1 · ed. 2026</span>
+    </nav>
+
+    <aside id="sidebar" class="graph-only">
+      <header class="titlebar">
+        <div class="mark">
+          <div class="mark-row mark-row-primary">
+            <span class="mark-name">SHAPE ROTATOR</span>
+            <span class="mark-count" id="mark-count">—</span>
+          </div>
+          <span class="mark-sub">world knowledge</span>
+        </div>
+      </header>
+
+      <section class="controls">
+        <label class="control-row">
+          <span class="control-label">lens</span>
+          <select id="lens-select"></select>
+        </label>
+        <label class="control-row">
+          <span class="control-label">shape</span>
+          <select id="shape-select"></select>
+        </label>
+        <div class="control-row source-row" role="tablist" aria-label="source filter">
+          <span class="control-label">source</span>
+          <div id="source-filter-bar" class="source-filter-bar">
+            <button class="source-chip selected" data-source="all" type="button" title="all peers">all</button>
+            <button class="source-chip" data-source="mine" type="button" title="this peer only">mine</button>
+            <!-- per-peer chips appear here at runtime, one per known peer -->
+          </div>
+        </div>
+        <label class="input-wrap">
+          <input id="search" type="search" placeholder="filter the graph.  ⌘F" autocomplete="off" spellcheck="false" />
+          <button id="search-counter" class="search-counter" type="button" hidden title="cycle to next match"></button>
+        </label>
+      </section>
+
+      <section id="events-panel" class="events-panel" data-collapsed="true">
+        <button id="events-panel-head" class="events-panel-head" type="button" aria-expanded="false" title="toggle activity log">
+          <span class="events-panel-title">events</span>
+          <span class="events-panel-sep">·</span>
+          <span id="events-panel-count" class="events-panel-count">0</span>
+          <span class="events-panel-chev" aria-hidden="true">▾</span>
+        </button>
+        <div id="events-panel-list" class="events-panel-list" role="log" aria-live="polite"></div>
+      </section>
+
+      <div id="detail" class="detail"></div>
+
+      <footer class="footer-meta">
+        <span id="node-count">·</span><span class="dim">&nbsp;papers</span>
+        <span class="sep">/</span>
+        <span id="edge-count">·</span><span class="dim">&nbsp;edges</span>
+        <span class="sep">/</span>
+        <span id="live-count" class="live">·</span><span class="dim">&nbsp;live</span>
+        <span class="sep">/</span>
+        <button id="peer-count-btn" class="peer-count-btn" type="button" aria-expanded="false" title="show peer identities">
+          <span id="peer-count">·</span><span class="dim">&nbsp;peers</span>
+        </button>
+      </footer>
+
+      <div id="peers-panel" class="peers-panel" hidden>
+        <header class="peers-panel-head">
+          <span class="peers-panel-title">peers</span>
+          <button id="peers-panel-close" class="peers-panel-close" type="button" aria-label="close">×</button>
+        </header>
+        <div id="peers-panel-list" class="peers-panel-list"></div>
+      </div>
+    </aside>
+
+    <main id="graph" class="graph-only">
+      <div id="cine-fade" class="cine-fade"></div>
+      <div id="incoming-toast" class="incoming-toast" hidden>
+        <span class="t-dot"></span>
+        <span class="t-body"></span>
+      </div>
+      <div id="status" class="status">connecting.</div>
+      <button id="anon-badge" class="anon-badge" type="button" data-state="idle" aria-expanded="false" title="anonymity-set state">
+        <span class="ab-label">circle</span>
+        <span class="ab-sep">:</span>
+        <span class="ab-value">idle</span>
+        <span class="ab-mark" aria-hidden="true"></span>
+      </button>
+      <div id="anon-popover" class="anon-popover" hidden></div>
+      <button id="timeline-toggle" class="timeline-toggle" type="button" aria-pressed="true" title="toggle wire timeline">◢</button>
+      <div id="timeline-toast" class="timeline-toast" hidden></div>
+      <div id="timeline-strip" class="timeline-strip" aria-hidden="false">
+        <div id="timeline-lanes" class="timeline-lanes"></div>
+        <div id="timeline-now" class="timeline-now"></div>
+        <div id="timeline-tooltip" class="timeline-tooltip" hidden></div>
+      </div>
+    </main>
+
+    <section id="cartography-view" class="cartography-view cart-only">
+      <div id="g2-stage" class="g2-stage"></div>
+    </section>
+
+    <section id="cosmos-view" class="cosmos-view cosmos-only">
+      <div id="cosmos-stage" class="cosmos-stage"></div>
+      <div id="cosmos-caption" class="cosmos-caption">
+        <span class="cosmos-cap-tag">cosmos</span>
+        <span class="cosmos-cap-sep">·</span>
+        <span class="cosmos-cap-text">gpu force simulation · click+drag to pan · scroll to zoom</span>
+      </div>
+      <div id="cosmos-modes" class="cosmos-modes" role="tablist" aria-label="layout mode">
+        <button class="cosmos-mode-btn" data-mode="force" type="button" title="default force layout">force</button>
+        <button class="cosmos-mode-btn selected" data-mode="cluster" type="button" title="cluster by peer">cluster</button>
+        <button class="cosmos-mode-btn" data-mode="radial" type="button" title="pin peers on a ring">radial</button>
+      </div>
+      <div id="cosmos-hover" class="cosmos-hover" hidden></div>
+    </section>
+
+    <section id="atlas-view" class="atlas-view atlas-only">
+      <div id="atlas-stage" class="atlas-stage"></div>
+      <div id="atlas-offline" class="atlas-offline" hidden role="status" aria-live="polite">
+        <div class="ao-card">
+          <div class="ao-glyph" aria-hidden="true">⌬</div>
+          <div class="ao-eyebrow">SWF-NODE UNREACHABLE</div>
+          <h2 class="ao-title">no daemon, no atlas</h2>
+          <p class="ao-body">
+            The field-guide is read-only — your indexed pages live in swf-node's local DB,
+            and we talk to it over <code id="ao-server-url">http://127.0.0.1:7777</code>.
+            Right now nothing's answering there, so atlas / network / metrics have nothing
+            to show. Alchemy still works — it has its own data path.
+          </p>
+          <div class="ao-actions">
+            <button id="ao-copy-prompt" class="ao-btn ao-btn-primary" type="button"
+                    title="copies a debug prompt to paste into Claude / ChatGPT / Cursor">
+              <span class="ao-btn-glyph" aria-hidden="true">⎘</span>
+              <span class="ao-btn-label">command to give agent</span>
+            </button>
+            <button id="ao-retry" class="ao-btn" type="button" title="re-fetch /graph from swf-node">
+              <span class="ao-btn-glyph" aria-hidden="true">↻</span>
+              <span class="ao-btn-label">retry</span>
+            </button>
+          </div>
+          <div class="ao-foot">
+            <span class="ao-foot-tag">tip</span>
+            <span>this panel auto-disappears the moment swf-node responds.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="alchemy-view" class="alchemy-view alchemy-only" aria-label="alchemy">
+      <div class="alchemy-grain" aria-hidden="true"></div>
+      <header class="alchemy-header">
+        <div class="alchemy-header-mark">
+          <span class="mark-name">SHAPE ROTATOR</span>
+          <span class="mark-sub">cohort · field journal</span>
+        </div>
+        <div class="alchemy-header-meta" aria-hidden="true">
+          <span class="ah-tag">N = 13 + 1 mentor</span>
+          <span class="ah-sep">·</span>
+          <span class="ah-tag">10 weeks</span>
+          <span class="ah-sep">·</span>
+          <span class="ah-tag">NYC anchor</span>
+        </div>
+      </header>
+      <div class="alchemy-stage">
+        <nav class="alchemy-rail" role="tablist" aria-label="alchemy experiments">
+          <button class="alchemy-rail-btn" data-alch-mode="feed" type="button" aria-selected="true">
+            <span class="ar-num">01</span>
+            <span class="ar-label">feed</span>
+            <span class="ar-hint">recent cohort activity</span>
+          </button>
+          <button class="alchemy-rail-btn" data-alch-mode="shapes" type="button" aria-selected="false">
+            <span class="ar-num">02</span>
+            <span class="ar-label">shapes</span>
+            <span class="ar-hint">the cohort, as shapes</span>
+          </button>
+          <button class="alchemy-rail-btn" data-alch-mode="pulse" type="button" aria-selected="false">
+            <span class="ar-num">03</span>
+            <span class="ar-label">pulse</span>
+            <span class="ar-hint">activity over time</span>
+          </button>
+          <button class="alchemy-rail-btn" data-alch-mode="constellation" type="button" aria-selected="false">
+            <span class="ar-num">04</span>
+            <span class="ar-label">constellation</span>
+            <span class="ar-hint">shared edges</span>
+          </button>
+          <button class="alchemy-rail-btn" data-alch-mode="profile" type="button" aria-selected="false">
+            <span class="ar-num">05</span>
+            <span class="ar-label">profile</span>
+            <span class="ar-hint">register your team</span>
+          </button>
+          <div class="alchemy-rail-foot" aria-hidden="true">EXPLORATORY · v0.2</div>
+        </nav>
+        <main id="alchemy-canvas" class="alchemy-canvas" aria-live="polite"></main>
+      </div>
+    </section>
+
+    <!-- experimental view archived 2026-05-09 — see _archive/experimental/. -->
+
+    <nav id="network-subtabs" class="network-subtabs network-tab-only" role="tablist" aria-label="network sub-view">
+      <button class="net-subtab" data-net-sub="network" type="button" aria-selected="true">network</button>
+      <button class="net-subtab" data-net-sub="metrics" type="button" aria-selected="false">metrics</button>
+    </nav>
+
+    <section id="network-view" class="network-view net-only">
+      <header class="net-header">
+        <div class="net-header-mark">
+          <span class="mark-name">SHAPE ROTATOR</span>
+          <span class="mark-sub">network</span>
+        </div>
+        <div id="net-anon-header" class="net-anon-header" data-state="idle" title="anonymity-set state">
+          <span class="nah-label">active circle</span>
+          <span class="nah-value">idle</span>
+          <span class="nah-meta"></span>
+        </div>
+      </header>
+
+      <div class="net-grid">
+        <section class="net-col net-col-peers" aria-label="peers">
+          <header class="net-col-head">
+            <span class="net-col-title">peers</span>
+            <span class="net-col-sep">·</span>
+            <span id="net-peers-count" class="net-col-count">0</span>
+          </header>
+          <div id="net-peers-list" class="net-peers-list"></div>
+        </section>
+
+        <section class="net-col net-col-center" aria-label="protocol traffic and router">
+          <section id="livegraph-panel" class="events-panel livegraph-panel net-livegraph" data-collapsed="false">
+            <header class="events-panel-head livegraph-head" aria-expanded="true">
+              <span class="events-panel-title">live network</span>
+              <span class="events-panel-sep">·</span>
+              <span id="livegraph-count" class="events-panel-count">0</span>
+              <span class="livegraph-mode" role="tablist" aria-label="live or replay">
+                <button class="livegraph-mode-btn selected" data-mode="live" type="button">live</button>
+                <button class="livegraph-mode-btn" data-mode="replay" type="button">replay 60s</button>
+              </span>
+            </header>
+            <div class="livegraph-body">
+              <canvas id="livegraph-canvas" class="livegraph-canvas"></canvas>
+              <div id="livegraph-tooltip" class="livegraph-tooltip" hidden></div>
+              <div id="livegraph-empty" class="livegraph-empty">no peers yet. the network is quiet.</div>
+            </div>
+          </section>
+
+          <section id="traffic-panel" class="events-panel traffic-panel net-traffic" data-collapsed="false">
+            <button id="traffic-panel-head" class="events-panel-head" type="button" aria-expanded="true" title="toggle protocol traffic">
+              <span class="events-panel-title">traffic</span>
+              <span class="events-panel-sep">·</span>
+              <span id="traffic-panel-count" class="events-panel-count">0</span>
+              <span class="events-panel-chev" aria-hidden="true">▾</span>
+            </button>
+            <div id="traffic-filter-bar" class="traffic-filter-bar" role="tablist" aria-label="traffic filter">
+              <button class="traffic-chip selected" data-filter="all" type="button">all</button>
+              <button class="traffic-chip" data-filter="slice" type="button">slice</button>
+              <button class="traffic-chip" data-filter="mdns" type="button">mdns</button>
+              <button class="traffic-chip" data-filter="ingest" type="button">ingest</button>
+              <button class="traffic-chip" data-filter="dcnet" type="button">dcnet</button>
+              <button class="traffic-chip" data-filter="tickets" type="button">tickets</button>
+              <button class="traffic-chip" data-filter="receipts" type="button">receipts</button>
+              <button class="traffic-chip" data-filter="router" type="button">router</button>
+              <button class="traffic-chip" data-filter="error" type="button">error</button>
+            </div>
+            <div id="traffic-panel-list" class="events-panel-list traffic-panel-list" role="log" aria-live="polite"></div>
+          </section>
+
+          <section id="router-panel" class="events-panel router-panel net-router" data-collapsed="false">
+            <button id="router-panel-head" class="events-panel-head" type="button" aria-expanded="true" title="toggle router flow inspector">
+              <span class="events-panel-title">router</span>
+              <span class="events-panel-sep">·</span>
+              <span id="router-panel-count" class="events-panel-count router-stub-tag">v0.3</span>
+              <span class="events-panel-chev" aria-hidden="true">▾</span>
+            </button>
+            <div id="router-panel-body" class="router-panel-body"></div>
+          </section>
+        </section>
+
+        <section class="net-col net-col-right" aria-label="tickets and receipts">
+          <section id="tickets-panel" class="events-panel tickets-panel net-tickets" data-collapsed="false">
+            <button id="tickets-panel-head" class="events-panel-head" type="button" aria-expanded="true" title="toggle ticket epoch panel">
+              <span class="events-panel-title">tickets</span>
+              <span class="events-panel-sep">·</span>
+              <span id="tickets-panel-epoch" class="events-panel-count tickets-epoch-tag">—</span>
+              <span class="events-panel-chev" aria-hidden="true">▾</span>
+            </button>
+            <div id="tickets-panel-body" class="tickets-panel-body"></div>
+          </section>
+
+          <section id="receipts-panel" class="events-panel receipts-panel net-receipts" data-collapsed="false">
+            <button id="receipts-panel-head" class="events-panel-head" type="button" aria-expanded="true" title="toggle anonymous receipts panel">
+              <span class="events-panel-title">receipts</span>
+              <span class="events-panel-sep">·</span>
+              <span id="receipts-panel-count" class="events-panel-count">0</span>
+              <span class="events-panel-chev" aria-hidden="true">▾</span>
+            </button>
+            <div id="receipts-panel-body" class="receipts-panel-body"></div>
+          </section>
+
+          <section class="net-col-detail" aria-label="detail">
+            <header class="net-col-head"><span class="net-col-title">detail</span></header>
+            <div id="net-detail-host" class="net-detail-host">
+              <div class="net-detail-empty">pick a row to inspect.</div>
+            </div>
+          </section>
+        </section>
+      </div>
+    </section>
+
+    <section id="search-view" class="search-view search-only">
+      <div class="search-stage">
+        <header class="search-header">
+          <div class="search-header-mark">
+            <span class="mark-name">SHAPE ROTATOR</span>
+            <span class="mark-sub">search</span>
+          </div>
+          <div class="search-header-hint">local. friends. web. routed by SPEC v0.3.</div>
+        </header>
+
+        <form id="search-form" class="search-form" autocomplete="off" spellcheck="false">
+          <div class="search-input-wrap">
+            <span class="search-input-glyph" aria-hidden="true">⌕</span>
+            <input id="search-input" class="search-input" type="text"
+                   placeholder="search the network."
+                   autocomplete="off" spellcheck="false" />
+            <button id="search-ask-agent" class="search-ask-agent" type="button"
+                    title="copy a prompt for your LLM agent (Cmd/Ctrl+Shift+A)">ask my agent</button>
+            <button id="search-submit" class="search-submit" type="submit" title="search (Enter)">go</button>
+          </div>
+          <div class="search-controls">
+            <label class="search-control">
+              <span class="search-control-label">policy</span>
+              <select id="search-policy">
+                <option value="default">default</option>
+                <option value="private_circle">private circle</option>
+                <option value="local_only">local only</option>
+                <option value="dev_placeholder_friends">dev placeholder friends</option>
+              </select>
+            </label>
+            <label class="search-control search-control-toggle">
+              <input id="search-confirm-egress" type="checkbox" />
+              <span class="search-control-label">allow public egress</span>
+            </label>
+            <label class="search-control">
+              <span class="search-control-label">top_k</span>
+              <select id="search-topk">
+                <option value="5">5</option>
+                <option value="10" selected>10</option>
+                <option value="20">20</option>
+                <option value="50">50</option>
+              </select>
+            </label>
+          </div>
+        </form>
+
+        <div id="search-meta" class="search-meta" hidden>
+          <span id="search-meta-delivery" class="search-meta-delivery">—</span>
+          <span class="search-meta-sep">·</span>
+          <span class="search-meta-row">
+            <span class="search-meta-key">privacy</span>
+            <span id="search-meta-privacy" class="rr-badge" data-pl="none">none</span>
+          </span>
+          <span class="search-meta-sep">·</span>
+          <span class="search-meta-row"><span class="search-meta-key">network</span><span id="search-meta-network" class="search-meta-flag">—</span></span>
+          <span class="search-meta-sep">·</span>
+          <span class="search-meta-row"><span class="search-meta-key">egress</span><span id="search-meta-egress" class="search-meta-flag">—</span></span>
+          <span class="search-meta-sep">·</span>
+          <span class="search-meta-row"><span class="search-meta-key">latency</span><span id="search-meta-latency" class="search-meta-flag">—</span></span>
+          <span class="search-meta-sep">·</span>
+          <span class="search-meta-row"><span class="search-meta-key">results</span><span id="search-meta-count" class="search-meta-flag">0</span></span>
+        </div>
+
+        <div id="search-status" class="search-status" hidden></div>
+
+        <div id="search-results" class="search-results" role="list">
+          <div class="search-empty">
+            <div class="search-empty-glyph" aria-hidden="true">
+              <svg viewBox="0 0 64 64" width="64" height="64" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="26" cy="26" r="14"/>
+                <path d="M36 36l16 16"/>
+                <path d="M22 26h8"/>
+              </svg>
+            </div>
+            <div class="search-empty-title">search</div>
+            <div class="search-empty-sub">local cache first. then friends. then the open web. you choose what is allowed to leave.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="metrics-view" class="metrics-view metrics-only">
+      <header class="metrics-header">
+        <div class="metrics-header-mark">
+          <span class="mark-name">SHAPE ROTATOR</span>
+          <span class="mark-sub">metrics</span>
+        </div>
+        <div class="metrics-header-controls">
+          <div id="metrics-range" class="metrics-range" role="tablist" aria-label="time range">
+            <button class="metrics-range-btn" data-range="15m" type="button">15m</button>
+            <button class="metrics-range-btn selected" data-range="1h" type="button">1h</button>
+            <button class="metrics-range-btn" data-range="6h" type="button">6h</button>
+            <button class="metrics-range-btn" data-range="24h" type="button">24h</button>
+          </div>
+          <button id="metrics-refresh" class="metrics-refresh" type="button" title="refresh now">refresh</button>
+          <span id="metrics-status" class="metrics-status">—</span>
+        </div>
+      </header>
+
+      <section class="metrics-stat-row">
+        <div class="metrics-stat" data-name="peers.count_active">
+          <span class="ms-label">peers active</span>
+          <span class="ms-value" data-stat="peers.count_active">—</span>
+          <span class="ms-sub" data-stat-sub="peers.count_known">of —</span>
+        </div>
+        <div class="metrics-stat" data-name="pages.count_total">
+          <span class="ms-label">pages</span>
+          <span class="ms-value" data-stat="pages.count_total">—</span>
+          <span class="ms-sub">total in graph</span>
+        </div>
+        <div class="metrics-stat" data-name="contributions.count_total">
+          <span class="ms-label">contributions</span>
+          <span class="ms-value" data-stat="contributions.count_total">—</span>
+          <span class="ms-sub">slices merged</span>
+        </div>
+        <div class="metrics-stat" data-name="events.lag_secs">
+          <span class="ms-label">events lag</span>
+          <span class="ms-value" data-stat="events.lag_secs">—</span>
+          <span class="ms-sub">seconds since last</span>
+        </div>
+        <div class="metrics-stat" data-name="process.rss_bytes">
+          <span class="ms-label">memory</span>
+          <span class="ms-value" data-stat="process.rss_bytes">—</span>
+          <span class="ms-sub">RSS</span>
+        </div>
+        <div class="metrics-stat" data-name="process.cpu_percent">
+          <span class="ms-label">cpu</span>
+          <span class="ms-value" data-stat="process.cpu_percent">—</span>
+          <span class="ms-sub">% (avg over interval)</span>
+        </div>
+      </section>
+
+      <section id="metrics-charts" class="metrics-charts">
+        <article class="metrics-chart" data-chart="search-latency">
+          <header class="mc-head"><span class="mc-title">search latency</span><span class="mc-meta">p50 / p95 (ms)</span></header>
+          <svg class="mc-svg" viewBox="0 0 280 140" preserveAspectRatio="none"></svg>
+        </article>
+        <article class="metrics-chart" data-chart="search-throughput">
+          <header class="mc-head"><span class="mc-title">search throughput</span><span class="mc-meta">queries / minute</span></header>
+          <svg class="mc-svg" viewBox="0 0 280 140" preserveAspectRatio="none"></svg>
+        </article>
+        <article class="metrics-chart" data-chart="scrape-latency">
+          <header class="mc-head"><span class="mc-title">scrape latency</span><span class="mc-meta">p50 / p95 (ms)</span></header>
+          <svg class="mc-svg" viewBox="0 0 280 140" preserveAspectRatio="none"></svg>
+        </article>
+        <article class="metrics-chart" data-chart="peers-active">
+          <header class="mc-head"><span class="mc-title">active peers</span><span class="mc-meta">last_seen &lt; 5min</span></header>
+          <svg class="mc-svg" viewBox="0 0 280 140" preserveAspectRatio="none"></svg>
+        </article>
+        <article class="metrics-chart" data-chart="pages-total">
+          <header class="mc-head"><span class="mc-title">pages total</span><span class="mc-meta">graph size</span></header>
+          <svg class="mc-svg" viewBox="0 0 280 140" preserveAspectRatio="none"></svg>
+        </article>
+        <article class="metrics-chart" data-chart="rss-mem">
+          <header class="mc-head"><span class="mc-title">memory (RSS)</span><span class="mc-meta">leak watch <span id="mc-leak" class="mc-leak"></span></span></header>
+          <svg class="mc-svg" viewBox="0 0 280 140" preserveAspectRatio="none"></svg>
+        </article>
+        <article class="metrics-chart" data-chart="cpu-percent">
+          <header class="mc-head"><span class="mc-title">cpu</span><span class="mc-meta">% over time</span></header>
+          <svg class="mc-svg" viewBox="0 0 280 140" preserveAspectRatio="none"></svg>
+        </article>
+      </section>
+
+      <div id="metrics-empty" class="metrics-empty" hidden>
+        metrics warm up in ~10s. start <code>swf-node</code> with <code>--full</code> if you haven't.
+      </div>
+      <div id="metrics-footnote" class="metrics-footnote" aria-hidden="true">
+        <span class="mfn-rule" aria-hidden="true"></span>
+        <span class="mfn-text">
+          <span class="mfn-key">anomaly dot</span>
+          a value more than 3σ from the rolling 60s mean. hover for context.
+        </span>
+      </div>
+    </section>
+
+    <script src="../node_modules/3d-force-graph/dist/3d-force-graph.min.js"></script>
+    <script type="module" src="renderer/boot.js"></script>
+  </body>
+</html>

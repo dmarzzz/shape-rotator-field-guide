@@ -1,0 +1,12 @@
+{
+  "name": "@shape-rotator/shape-ui",
+  "version": "0.1.0",
+  "description": "Shared shape vocabulary, glyphs, and design tokens for Shape Rotator program apps.",
+  "private": true,
+  "main": "src/index.js",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": ["src"]
+}

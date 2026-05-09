@@ -1,0 +1,48 @@
+schema_version: 1
+
+# Visibility schema per docs/SHAPE-ROTATOR-OS-SPEC.md §3.3.
+#
+# `surface_fields` are extracted into the cohort.surface bundle (visible
+# to all participants). Everything else in the markdown — frontmatter +
+# body — lands in cohort.depth (encrypted to alchemists).
+#
+# To add a new public field: add it to the markdown frontmatter, then
+# add the key here. To make a field steward-only: don't add it here.
+
+people:
+  surface_fields:
+    - record_id
+    - record_type
+    - name
+    - team
+    - role
+    - geo
+    - domain
+    - links
+
+teams:
+  surface_fields:
+    - record_id
+    - record_type
+    - kind              # "team" (default) | "project" — UI discriminator only; both share the team-shaped frontmatter
+    - name
+    - focus
+    - lead
+    - members_count
+    - geo
+    - domain
+    - shape
+    - is_mentor
+    - links             # nested object: github, x, website, demo, deck, repo
+    - paper_basis       # the IC3 / Flashbots paper the team's work is grounded in
+    - traction          # short public-traction blurb (no funding amounts / runway)
+    - hackathon_note    # any hackathon achievement worth surfacing
+
+clusters:
+  surface_fields:
+    - record_id
+    - record_type
+    - name
+    - label
+    - teams
+    - description

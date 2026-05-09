@@ -1,0 +1,35 @@
+# dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# build / dist
+dist/
+build/
+out/
+
+# data (lives on the local swf-node, not in repo)
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# logs / scratch
+*.log
+.DS_Store
+.vscode/
+.idea/
+
+# env / secrets
+.env
+.env.local
+
+# private signing keys — NEVER commit
+cohort-data/.private/
+
+# screenshots
+screenshots/
+*.png
+!docs/**/*.png

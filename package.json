@@ -1,0 +1,22 @@
+{
+  "name": "shape-rotator-field-guide",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cohort field-guide Electron app for the Shape Rotator program. Atlas of indexed pages, alchemy view of the cohort (teams + projects + people), local-first peer search via swf-node, and a profile editor that submits PRs against this repo.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "field-guide": "npm --workspace @shape-rotator/field-guide start",
+    "field-guide:dev": "npm --workspace @shape-rotator/field-guide run dev",
+    "build:cohort": "node scripts/build-bundles.js",
+    "check:cohort": "node scripts/build-bundles.js --check",
+    "publish:cohort": "node scripts/publish-bundles.js",
+    "publish:cohort:dry": "node scripts/publish-bundles.js --dry-run",
+    "keys:gen": "node scripts/keys-gen.js"
+  },
+  "devDependencies": {
+    "js-yaml": "^4.1.1"
+  }
+}
