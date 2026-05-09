@@ -100,6 +100,68 @@ function refreshLiveCount() {
 function state_liveSeen() { return srwk.liveSeen; }
 setInterval(() => refreshLiveCount(), 5000);
 
+// ─── app-update chip (electron-updater + GitHub Releases) ────────────
+// Wires the version chip in the top-right of the tab bar. On boot, paints
+// `v0.x.y` (or `v0.x.y · dev` in dev). Click checks for updates; if one's
+// available, download → install via two confirms. Background "available"
+// styling kicks in once we know there's a newer version.
+async function wireAppUpdateChip() {
+  const chip = document.getElementById("fg-version-chip");
+  if (!chip) return;
+  let info = null;
+  try { info = await window.api.getAppInfo?.(); } catch {}
+  if (info) {
+    chip.textContent = `v${info.version}${info.isPackaged ? "" : "·dev"}`;
+    chip.title = info.isPackaged
+      ? `v${info.version} · click to check for updates`
+      : `v${info.version} · dev mode (auto-update disabled)`;
+  } else {
+    chip.textContent = "v?";
+  }
+  chip.addEventListener("click", checkAppUpdate);
+}
+async function checkAppUpdate() {
+  const chip = document.getElementById("fg-version-chip");
+  if (!chip) return;
+  const prevTitle = chip.title;
+  chip.title = "checking for updates…";
+  try {
+    const r = await window.api.checkAppUpdate?.();
+    if (!r) { chip.title = prevTitle; return; }
+    if (!r.ok && r.reason === "dev_mode") {
+      chip.title = `dev mode · ${r.detail || "update disabled"}`;
+      return;
+    }
+    if (!r.ok) {
+      chip.title = `update check failed: ${r.detail || r.reason}`;
+      return;
+    }
+    if (!r.available) {
+      chip.title = `up to date · v${r.current}`;
+      chip.removeAttribute("data-update");
+      return;
+    }
+    chip.dataset.update = "available";
+    chip.title = `update available · v${r.latest} (you have v${r.current})`;
+    const ok = window.confirm(`Update available: v${r.latest} (you have v${r.current}).\n\nDownload now? It will install on next quit.`);
+    if (!ok) return;
+    chip.title = "downloading update…";
+    const dl = await window.api.applyAppUpdate?.();
+    if (!dl?.ok) {
+      chip.title = `download failed: ${dl?.detail || dl?.reason || "unknown"}`;
+      return;
+    }
+    const restart = window.confirm(`Downloaded v${r.latest}.\n\nRestart now to install?`);
+    if (restart) {
+      await window.api.applyUpdateAndRestart?.();
+    } else {
+      chip.title = `v${r.latest} downloaded · will install on next quit`;
+    }
+  } catch (e) {
+    chip.title = `update flow failed: ${e?.message || e}`;
+  }
+}
+
 async function boot() {
   const env = await window.api.env();
   srwk.serverUrl = env.serverUrl;
@@ -150,6 +212,12 @@ async function boot() {
   } catch (e) {
     console.warn("[boot] identity module failed to load:", e?.message || e);
   }
+
+  // App version + auto-update chip (electron-updater + GitHub Releases).
+  // Paints "v0.x" in the top-right; click checks for an update and walks
+  // the user through download → install. No-op in dev (the IPC handler
+  // returns reason: "dev_mode").
+  wireAppUpdateChip();
 
   // Wire tabs + search-overlay FIRST so the UI is navigable even if the
   // swf-node graph fetch fails. Previously a `Failed to fetch` from

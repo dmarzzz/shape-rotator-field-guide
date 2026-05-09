@@ -4383,6 +4383,23 @@ html[data-reduce-motion="1"] .tab-indicator { transition: none; }
   padding-right: 8px;
   user-select: none;
 }
+/* clickable version chip — same line as .tab-bar-foot but interactive,
+   hosts the electron-updater click flow. Has the [data-update] attr
+   stamped to "available" when checkAppUpdate finds a newer version. */
+.fg-version-chip {
+  background: transparent; border: none;
+  cursor: pointer;
+  transition: color 200ms var(--ease, ease);
+}
+.fg-version-chip:hover { color: rgba(220, 232, 255, 0.92); }
+.fg-version-chip[data-update="available"] {
+  color: var(--neon-cyan);
+  text-shadow: 0 0 8px rgba(90, 240, 255, 0.40);
+}
+.fg-version-chip[data-update="available"]::after {
+  content: " · update";
+  opacity: 0.85;
+}
 
 /* glass surfaces: one less border tone */
 .events-panel,

@@ -134,8 +134,72 @@ ipcMain.handle("shell:openExternal", async (_e, url) => {
   if (typeof url === "string" && /^https?:\/\//i.test(url)) shell.openExternal(url);
 });
 
+// ─── electron-updater (release-driven app binary updates) ────────────
+// Reads the `latest-{mac,win,linux}.yml` feed published by
+// .github/workflows/field-guide-release.yml on each tag push. No-op in
+// dev — `npm run dev` users still update via git pull / npm install.
+function initAutoUpdater() {
+  if (!app.isPackaged) return;
+  try {
+    const { autoUpdater } = require("electron-updater");
+    autoUpdater.autoDownload = false;          // wait for explicit user click
+    autoUpdater.autoInstallOnAppQuit = true;   // apply on next quit if downloaded
+    autoUpdater.on("error", (err) => process.stderr.write(`[viz:warn] updater error: ${err && err.message}\n`));
+    autoUpdater.on("update-available", (info) => process.stderr.write(`[viz:log] update available: ${info && info.version}\n`));
+    autoUpdater.on("update-not-available", () => process.stderr.write(`[viz:log] no update available\n`));
+    autoUpdater.on("download-progress", (p) => process.stderr.write(`[viz:log] downloading update: ${Math.round(p.percent || 0)}%\n`));
+    autoUpdater.on("update-downloaded", (info) => process.stderr.write(`[viz:log] update downloaded: ${info && info.version}\n`));
+    autoUpdater.checkForUpdates().catch(() => {});
+  } catch (e) {
+    process.stderr.write(`[viz:warn] electron-updater init failed: ${e.message}\n`);
+  }
+}
+
+ipcMain.handle("fg:check-update", async () => {
+  if (!app.isPackaged) {
+    return { ok: false, reason: "dev_mode", current: app.getVersion(), detail: "auto-update is disabled in dev (npm run dev). git pull && npm install instead." };
+  }
+  try {
+    const { autoUpdater } = require("electron-updater");
+    const result = await autoUpdater.checkForUpdates();
+    const latest = result?.updateInfo?.version || null;
+    const available = !!latest && latest !== app.getVersion();
+    return { ok: true, current: app.getVersion(), latest, available };
+  } catch (e) {
+    return { ok: false, reason: "check_failed", detail: e.message, current: app.getVersion() };
+  }
+});
+
+ipcMain.handle("fg:apply-update", async () => {
+  if (!app.isPackaged) return { ok: false, reason: "dev_mode" };
+  try {
+    const { autoUpdater } = require("electron-updater");
+    await autoUpdater.downloadUpdate();
+    return { ok: true, detail: "downloaded · will install on next quit (or click 'install + restart' to apply now)" };
+  } catch (e) {
+    return { ok: false, reason: "download_failed", detail: e.message };
+  }
+});
+
+ipcMain.handle("fg:apply-update-and-restart", async () => {
+  if (!app.isPackaged) return { ok: false, reason: "dev_mode" };
+  try {
+    const { autoUpdater } = require("electron-updater");
+    autoUpdater.quitAndInstall(false, true);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: "install_failed", detail: e.message };
+  }
+});
+
+ipcMain.handle("fg:get-app-info", () => ({
+  version: app.getVersion(),
+  isPackaged: app.isPackaged,
+}));
+
 app.whenReady().then(() => {
   createWindow();
+  initAutoUpdater();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

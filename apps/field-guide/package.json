@@ -5,16 +5,99 @@
   "private": true,
   "main": "main.js",
   "type": "commonjs",
+  "description": "Cohort field-guide Electron app — atlas, alchemy, network/metrics over swf-node, and a profile editor that submits PRs against the cohort-data repo.",
+  "author": {
+    "name": "Shape Rotator",
+    "email": "noreply@shape-rotator.local"
+  },
   "scripts": {
     "start": "electron .",
-    "dev": "SRWK_DEVTOOLS=1 electron ."
+    "dev": "SRWK_DEVTOOLS=1 electron .",
+    "dist:mac":   "electron-builder --mac",
+    "dist:win":   "electron-builder --win",
+    "dist:linux": "electron-builder --linux",
+    "dist:all":   "electron-builder -mwl",
+    "pack":       "electron-builder --dir"
   },
   "dependencies": {
     "@cosmos.gl/graph": "^2.6.4",
     "3d-force-graph": "^1.80.0",
+    "electron-updater": "^6.8.3",
     "three": "^0.184.0"
   },
   "devDependencies": {
-    "electron": "^33.0.0"
+    "electron": "^33.0.0",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.shape-rotator.field-guide",
+    "productName": "Shape Rotator Field Guide",
+    "artifactName": "ShapeRotatorFieldGuide-${version}-${os}-${arch}.${ext}",
+    "electronVersion": "33.4.11",
+    "nodeGypRebuild": false,
+    "buildDependenciesFromSource": false,
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "main.js"
+    },
+    "directories": {
+      "output": "dist",
+      "buildResources": "build-resources"
+    },
+    "asar": true,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "dmarzzz",
+        "repo": "shape-rotator-field-guide",
+        "releaseType": "release"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        { "target": "dmg",  "arch": ["arm64", "x64"] },
+        { "target": "zip",  "arch": ["arm64", "x64"] }
+      ],
+      "darkModeSupport": true,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null
+    },
+    "dmg": {
+      "title": "${productName} ${version}",
+      "iconSize": 96,
+      "contents": [
+        { "x": 130, "y": 200, "type": "file" },
+        { "x": 410, "y": 200, "type": "link", "path": "/Applications" }
+      ],
+      "window": { "width": 540, "height": 380 }
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64", "arm64"] },
+        { "target": "zip",  "arch": ["x64", "arm64"] }
+      ],
+      "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64", "arm64"] },
+        { "target": "deb",      "arch": ["x64", "arm64"] }
+      ],
+      "category": "Development",
+      "synopsis": "Shape Rotator Field Guide — cohort participant viewer"
+    }
   }
 }
