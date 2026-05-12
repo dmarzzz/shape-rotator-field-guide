@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, nativeTheme, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, nativeTheme, screen, shell } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 
@@ -85,6 +85,25 @@ function writeJSON(p, d) {
 
 function createWindow() {
   const ws = readJSON(WINDOW_STATE, { width: 1600, height: 1000 });
+  // Bounds-validate the saved x/y against currently-attached displays —
+  // if the user disconnected a secondary monitor between launches, the
+  // saved position lands the window invisibly off-screen and the app
+  // looks frozen. Drop the saved position when no display contains it;
+  // Electron will then center on the active display.
+  if (typeof ws.x === "number" && typeof ws.y === "number") {
+    try {
+      const probe = { x: ws.x + 50, y: ws.y + 50 };
+      const onScreen = screen.getAllDisplays().some(d => {
+        const b = d.bounds;
+        return probe.x >= b.x && probe.x < b.x + b.width
+            && probe.y >= b.y && probe.y < b.y + b.height;
+      });
+      if (!onScreen) {
+        process.stderr.write(`[viz:log] saved window position (${ws.x},${ws.y}) is off-screen — centering on active display\n`);
+        delete ws.x; delete ws.y;
+      }
+    } catch {}
+  }
   const win = new BrowserWindow({
     width: ws.width, height: ws.height, x: ws.x, y: ws.y,
     minWidth: 960, minHeight: 600,

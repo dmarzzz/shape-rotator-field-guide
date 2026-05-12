@@ -1561,7 +1561,7 @@ function buildOfflineAgentPrompt() {
     `   (check the repo's README for the exact install command — pipx, pip, or source).`,
     `4. Verify it's up:              \`curl -s ${url}/graph?lens=contributor | head\``,
     ``,
-    `Spec for context: docs/SHAPE-ROTATOR-OS-SPEC.md in shape-rotator-wrld-knwldge-viz.`,
+    `Field-guide source + bug reports: github.com/dmarzzz/shape-rotator-field-guide.`,
     `Once the daemon responds, the field-guide auto-recovers within ~5s — no reload`,
     `needed.`,
   ].join("\n");

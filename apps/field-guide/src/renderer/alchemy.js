@@ -40,7 +40,7 @@ const FEED_REFRESH_MS = 12 * 60 * 1000;
 // each team's record so participants can edit it directly. Hardcoded
 // for now — if this repo is ever renamed or the cohort-data dir moves
 // to a separate repo (D4 from the spec walkthrough), update this.
-const COHORT_DATA_REPO = "https://github.com/dmarzzz/shape-rotator-wrld-knwldge-viz";
+const COHORT_DATA_REPO = "https://github.com/dmarzzz/shape-rotator-field-guide";
 const COHORT_DATA_BRANCH = "main";
 function teamRecordEditUrl(record_id) {
   return `${COHORT_DATA_REPO}/edit/${COHORT_DATA_BRANCH}/cohort-data/teams/${record_id}.md`;
@@ -578,7 +578,7 @@ function renderDetail(recordId) {
   const teamPeople = (state.cohort.people || []).filter(p => p.team === recordId);
 
   const linksRow = renderDetailLinks(team.links || {});
-  const editUrl = `https://github.com/dmarzzz/shape-rotator-wrld-knwldge-viz/edit/main/cohort-data/teams/${encodeURIComponent(recordId)}.md?quick_pull=1`;
+  const editUrl = `https://github.com/dmarzzz/shape-rotator-field-guide/edit/main/cohort-data/teams/${encodeURIComponent(recordId)}.md?quick_pull=1`;
 
   state.canvas.innerHTML = `
     <header class="alch-detail-bar">
@@ -1716,7 +1716,7 @@ function submitEditAsPR() {
   if (!result) return;
   const p = state.profile;
   const owner  = "dmarzzz";
-  const repo   = "shape-rotator-wrld-knwldge-viz";
+  const repo   = "shape-rotator-field-guide";
   const branch = "main";
 
   // ADD mode → github /new/ URL with prefilled content.
