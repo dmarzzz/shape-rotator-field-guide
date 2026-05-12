@@ -110,3 +110,9 @@ export {
   domainLabel,
   classLabel,
 };
+// WebGL2 renderer for the cohort shapes — see shape-canvas.js for the
+// full shader. Hash-of-record-id drives a unique-but-stable palette per
+// team. Call mountShape(canvas, {family, seed}) on each <canvas>; the
+// returned controller's .destroy() releases the GL context (browsers
+// cap to ~16, so destroying on re-render is essential).
+export { mountShape, mountShapesIn, hashColors } from "./shape-canvas.js";

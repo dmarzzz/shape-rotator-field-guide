@@ -5858,6 +5858,18 @@ body[data-active-tab="experimental"] #sidebar { padding-top: 0; }
   animation: alchTilt 11s ease-in-out infinite, alchBreathe 9.5s ease-in-out infinite;
   transform-origin: center;
 }
+/* WebGL shape canvas (replaces the SVG above for the shapes grid +
+   detail page hero + legend). Each <canvas> has its own GL2 context
+   running the shared SDF shader from packages/shape-ui/shape-canvas.js.
+   Square aspect; the inner shader handles its own breathing animation. */
+.alch-card-shape canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* Slight rounded mask so the shape doesn't sit in a hard rectangle
+     against the parchment / dark backgrounds. */
+  border-radius: 6px;
+}
 .alch-card-shape svg .as-fill { fill: var(--alchemy-oxide); }
 .alch-card-shape svg .as-stroke { stroke: var(--alchemy-oxide-bright); fill: none; stroke-width: 1; }
 .alch-card-shape svg .as-mute { stroke: rgba(241,236,231,0.18); fill: none; stroke-width: 0.6; }
@@ -6361,6 +6373,12 @@ body[data-active-tab="experimental"] #sidebar { padding-top: 0; }
   padding: 24px;
 }
 .alch-detail-shape svg { width: 100%; height: 100%; }
+.alch-detail-shape canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+}
 .alch-detail-name {
   font-family: var(--font-display, var(--font-mono));
   font-size: 34px;

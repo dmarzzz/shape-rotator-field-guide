@@ -18,6 +18,7 @@
 
 import {
   SHAPES, SHAPE_BY_KEY, shapeForTeam, shapeSvgByFam, domainLabel,
+  mountShape, mountShapesIn,
 } from "@shape-rotator/shape-ui";
 import { getCohortSurface, subscribeToCohortChanges } from "./cohort-source.js";
 
@@ -59,6 +60,7 @@ const state = {
   shapesKindFilter: "all",  // "all" | "team" | "project" — chip on the shapes grid
   detailRecordId: null,     // when set, the alchemy canvas renders the full detail page for this team/project
   detailReturnMode: null,   // remembered so the back button knows where to land
+  shapeControllers: [],     // active shader-canvas controllers — destroyed before each re-render so GL contexts don't leak
   cohort: null,        // { teams, clusters, people } from cohort-source
   profile: null,       // local-only: { user, editor state, ... }
   events: [],          // normalized feed items, latest-first
@@ -195,6 +197,11 @@ function render() {
   const canvas = state.canvas;
   canvas.classList.remove("is-entering");
   canvas.classList.add("is-leaving");
+  // Tear down every active shape-shader controller before the innerHTML
+  // rewrite — each one owns a WebGL2 context, and browsers cap us to
+  // ~16. Leaving them alive across renders would silently exhaust the
+  // budget after a few mode switches.
+  destroyAllShapes();
   setTimeout(() => {
     canvas.classList.add("is-entering");
     canvas.classList.remove("is-leaving");
@@ -220,7 +227,23 @@ function render() {
       if (state.mode === "feed") refreshFeed({ source: "mode-enter" });
       if (state.mode === "constellation") wireConstellationHover();
     }
+    // Mount shape shaders LAST — every <canvas data-shape-fam> emitted
+    // by the renderers above gets one WebGL2 context here. Controllers
+    // are tracked in state.shapeControllers so the next render can
+    // .destroy() them all in one shot.
+    mountAllShapes();
   }, 220);
+}
+
+function destroyAllShapes() {
+  for (const c of state.shapeControllers) {
+    try { c.destroy(); } catch {}
+  }
+  state.shapeControllers = [];
+}
+function mountAllShapes() {
+  if (!state.canvas) return;
+  state.shapeControllers = mountShapesIn(state.canvas);
 }
 
 // Display id "SHAPE-NN" from the team's index in the array.
@@ -249,7 +272,7 @@ function renderLegend() {
         <span class="ct-sep">·</span>
         <span>${escHtml(domainLabel(s.domain))}</span>
       </div>
-      <div class="alch-card-shape alch-legend-shape">${shapeSvgByFam(s.fam, (i + 1) * 53)}</div>
+      <div class="alch-card-shape alch-legend-shape"><canvas data-shape-fam="${s.fam}" data-shape-seed="legend:${escAttr(s.key)}"></canvas></div>
       <div class="alch-legend-name">${escHtml(s.name)}</div>
       <div class="alch-card-rule"></div>
       <div class="alch-card-meta">
@@ -312,7 +335,7 @@ function renderShapes() {
         <span>${escHtml(domainLabel(t.domain))}</span>
         ${t.is_mentor ? `<span class="ct-sep">·</span><span>mentor</span>` : ""}
       </div>
-      <div class="alch-card-shape">${shapeSvgByFam(s ? s.fam : 0, (idx + 1) * 37)}</div>
+      <div class="alch-card-shape"><canvas data-shape-fam="${s ? s.fam : 0}" data-shape-seed="${escAttr(t.record_id)}"></canvas></div>
       <div class="alch-card-name">${escHtml(t.name)}</div>
       <div class="alch-card-rule"></div>
       <div class="alch-card-meta">
@@ -596,7 +619,7 @@ function renderDetail(recordId) {
     </header>
 
     <section class="alch-detail-hero">
-      <div class="alch-detail-shape">${s ? shapeSvgByFam(s.fam, hashStr(team.record_id)) : ""}</div>
+      <div class="alch-detail-shape">${s ? `<canvas data-shape-fam="${s.fam}" data-shape-seed="${escAttr(team.record_id)}"></canvas>` : ""}</div>
       <div class="alch-detail-hero-text">
         <h2 class="alch-detail-name">${escHtml(team.name)}</h2>
         <p class="alch-detail-focus">${escHtml(team.focus || "—")}</p>
@@ -755,7 +778,7 @@ function openDrawer(recordId) {
   body.innerHTML = `
     <div class="alch-drawer-tag">${tagBits.join("")}</div>
     <div class="alch-drawer-name">${escHtml(team.name)}</div>
-    <div class="alch-drawer-shape">${s ? shapeSvgByFam(s.fam, hashStr(team.record_id)) : ""}</div>
+    <div class="alch-drawer-shape">${s ? `<canvas data-shape-fam="${s.fam}" data-shape-seed="${escAttr(team.record_id)}"></canvas>` : ""}</div>
     <div class="alch-drawer-rule"></div>
     <section class="alch-drawer-section">
       <h4>about</h4>
