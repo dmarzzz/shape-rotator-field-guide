@@ -8,7 +8,7 @@ kind: team
 name: Daedalus
 focus: prediction market microstructure research
 lead: Leo Fang
-members_count: 2
+members_count: 3
 geo: distributed (NYC / SF / Asia)
 domain: crypto
 shape: torus
