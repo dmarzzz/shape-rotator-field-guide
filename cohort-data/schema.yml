@@ -18,6 +18,9 @@ people:
     - role
     - geo
     - domain
+    - email          # public contact — surfaced to all cohort participants
+    - dates_start    # YYYY-MM-DD · when this individual joins the cohort
+    - dates_end      # YYYY-MM-DD · when this individual departs
     - links
 
 teams:
