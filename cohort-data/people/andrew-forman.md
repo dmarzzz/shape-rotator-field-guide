@@ -1,14 +1,14 @@
 ---
-record_id: prakhar
+record_id: andrew-forman
 record_type: person
 schema_version: 1
-name: Prakhar Ojha
-team: conclave
+name: Andrew Forman
+team: abra
 role: lead
 geo: NYC
-domain: ai
+domain: tee
 email: null
-dates_start: 2026-05-17
+dates_start: 2026-05-18
 dates_end: 2026-07-18
 links:
   github: null
@@ -19,4 +19,4 @@ links:
 
 ## about
 
-(public surface — Conclave · NDAI framework · skills runtime)
+(public surface — formal verification · dstack TEE Postgres)
