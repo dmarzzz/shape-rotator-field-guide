@@ -155,6 +155,14 @@ function loadAllRecords() {
 function canonical(v) {
   if (v === null) return "null";
   if (v === undefined) return "null"; // shouldn't happen in our schema
+  // js-yaml parses YYYY-MM-DD strings as JS Date instances. Without
+  // this branch, Date falls through to the object case and serializes
+  // as `{}` (Dates have no enumerable own properties) — which was the
+  // bug that wiped dates_start / dates_end / absences from the wire.
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) throw new Error(`invalid Date in payload`);
+    return JSON.stringify(v.toISOString().slice(0, 10));   // YYYY-MM-DD
+  }
   if (typeof v === "number") {
     if (!Number.isFinite(v)) throw new Error(`non-finite number in payload`);
     return JSON.stringify(v);

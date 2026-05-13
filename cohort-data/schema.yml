@@ -19,8 +19,16 @@ people:
     - geo
     - domain
     - email          # public contact — surfaced to all cohort participants
-    - dates_start    # YYYY-MM-DD · when this individual joins the cohort
-    - dates_end      # YYYY-MM-DD · when this individual departs
+    - dates_start    # YYYY-MM-DD · start of the OVERALL window this person is in the cohort
+    - dates_end      # YYYY-MM-DD · end of that overall window
+    - secondary_teams # optional list of team record_ids — this person also
+                     # contributes to these projects/teams in addition to
+                     # their primary `team`. Views that group by team list
+                     # them under each entry.
+    - absences       # optional list of {start, end, note?} ranges representing gaps
+                     # within their window — vacations, conferences, remote weeks.
+                     # Each entry is YYYY-MM-DD inclusive on both ends. The app can
+                     # compute effective-present = window minus absences when it cares.
     - links
 
 teams:

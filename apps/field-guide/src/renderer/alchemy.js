@@ -26,7 +26,7 @@ const ALCHEMY_LS_KEY  = "srwk:alchemy_mode";
 const PROFILE_LS_KEY  = "srwk:profile_v1";
 const EVENTS_LS_KEY   = "srwk:cohort_events_v1";
 const DETAIL_LS_KEY   = "srwk:alchemy_detail_v1";
-const ALCHEMY_MODES   = ["feed", "shapes", "pulse", "constellation", "profile"];
+const ALCHEMY_MODES   = ["feed", "shapes", "pulse", "constellation", "calendar", "profile"];
 
 const WEEKS_TOTAL = 10;
 const WEEK_NOW = 1; // TODO: bump weekly, or derive from a cohort start date.
@@ -213,6 +213,7 @@ function render() {
     else if (state.mode === "shapes") renderShapes();
     else if (state.mode === "pulse") renderPulse();
     else if (state.mode === "constellation") renderConstellation();
+    else if (state.mode === "calendar") renderCalendar();
     else if (state.mode === "profile") renderProfile();
     // Index cards for the staggered entrance.
     const cards = canvas.querySelectorAll(".alch-card, .alch-legend-card, .alch-feed-item");
@@ -226,6 +227,7 @@ function render() {
       // Kick a feed refresh on entry; the timer keeps it warm in background.
       if (state.mode === "feed") refreshFeed({ source: "mode-enter" });
       if (state.mode === "constellation") wireConstellationHover();
+      if (state.mode === "calendar") wireCalendar();
     }
     // Mount shape shaders LAST — every <canvas data-shape-fam> emitted
     // by the renderers above gets one WebGL2 context here. Controllers
@@ -272,7 +274,7 @@ function renderLegend() {
         <span class="ct-sep">·</span>
         <span>${escHtml(domainLabel(s.domain))}</span>
       </div>
-      <div class="alch-card-shape alch-legend-shape"><canvas data-shape-fam="${s.fam}" data-shape-seed="legend:${escAttr(s.key)}"></canvas></div>
+      <div class="alch-card-shape alch-legend-shape"><canvas data-shape-fam="${s.fam}" data-shape-kind="team" data-shape-seed="legend:${escAttr(s.key)}"></canvas></div>
       <div class="alch-legend-name">${escHtml(s.name)}</div>
       <div class="alch-card-rule"></div>
       <div class="alch-card-meta">
@@ -295,66 +297,46 @@ function renderLegend() {
 
 // ─── shapes (the cohort, as shapes) ──────────────────────────────────
 function renderShapes() {
-  const all = state.cohort.teams || [];
-  // Counts go on the chips so empty filters are obvious before clicking.
-  const nTeam    = all.filter(t => teamKind(t) === "team").length;
-  const nProject = all.filter(t => teamKind(t) === "project").length;
+  const allTeams  = state.cohort.teams  || [];
+  const allPeople = state.cohort.people || [];
+  const nTeam    = allTeams.filter(t => teamKind(t) === "team").length;
+  const nProject = allTeams.filter(t => teamKind(t) === "project").length;
+  const nPerson  = allPeople.length;
+  const nAll     = allTeams.length + allPeople.length;
   const filter = state.shapesKindFilter;
-  const teams = filter === "all" ? all : all.filter(t => teamKind(t) === filter);
+  // Build the records list according to the active filter — `person` is
+  // a new top-level filter that swaps the source from teams → people.
+  let records;
+  if (filter === "person")        records = allPeople.map(p => ({ ...p, _kind: "person" }));
+  else if (filter === "team")     records = allTeams.filter(t => teamKind(t) === "team").map(t => ({ ...t, _kind: "team" }));
+  else if (filter === "project")  records = allTeams.filter(t => teamKind(t) === "project").map(t => ({ ...t, _kind: "project" }));
+  else                            records = [
+    ...allTeams.map(t => ({ ...t, _kind: teamKind(t) })),
+    ...allPeople.map(p => ({ ...p, _kind: "person" })),
+  ];
   const chips = `
-    <nav class="alch-shapes-filter" role="tablist" aria-label="filter by kind">
-      <button class="alch-shapes-chip" data-shapes-filter="all"     type="button" aria-selected="${filter === "all"}">all <span class="ascn">${all.length}</span></button>
-      <button class="alch-shapes-chip" data-shapes-filter="team"    type="button" aria-selected="${filter === "team"}">teams <span class="ascn">${nTeam}</span></button>
-      <button class="alch-shapes-chip" data-shapes-filter="project" type="button" aria-selected="${filter === "project"}">projects <span class="ascn">${nProject}</span></button>
-    </nav>
+    <div class="alch-shapes-toolbar">
+      <nav class="alch-shapes-filter" role="tablist" aria-label="filter by kind">
+        <button class="alch-shapes-chip" data-shapes-filter="all"     type="button" aria-selected="${filter === "all"}">all <span class="ascn">${nAll}</span></button>
+        <button class="alch-shapes-chip" data-shapes-filter="team"    type="button" aria-selected="${filter === "team"}">teams <span class="ascn">${nTeam}</span></button>
+        <button class="alch-shapes-chip" data-shapes-filter="project" type="button" aria-selected="${filter === "project"}">projects <span class="ascn">${nProject}</span></button>
+        <button class="alch-shapes-chip" data-shapes-filter="person"  type="button" aria-selected="${filter === "person"}">individuals <span class="ascn">${nPerson}</span></button>
+      </nav>
+      <button id="dossier-export-png" class="cal-action" type="button">export dossier (png)</button>
+    </div>
   `;
-  const cards = teams.map((t, idx) => {
-    const s = shapeForTeam(t);
-    const links = [];
-    const gh   = t?.links?.github;
-    const repo = t?.links?.repo;
-    const x    = t?.links?.x;
-    if (repo && GH_REPO_RE.test(repo)) {
-      links.push(`<div class="alch-card-meta-row"><span class="cm-k">repo</span><span class="cm-v"><a href="https://github.com/${escHtml(repo)}" data-external class="alch-card-repo-link">${escHtml(repo)}</a></span></div>`);
-    }
-    if (gh) links.push(`<div class="alch-card-meta-row"><span class="cm-k">github</span><span class="cm-v"><a href="https://github.com/${escHtml(gh)}" data-external>${escHtml(gh)}</a></span></div>`);
-    if (x)  links.push(`<div class="alch-card-meta-row"><span class="cm-k">x</span><span class="cm-v"><a href="https://x.com/${escHtml(x)}" data-external>@${escHtml(x)}</a></span></div>`);
-    if (!gh && !x && !repo) links.push(`<div class="alch-card-meta-row"><span class="cm-k">links</span><span class="cm-v" style="opacity:0.55">— not yet submitted</span></div>`);
-    const cardCls = (t.is_mentor ? "alch-card alch-card-mentor" : "alch-card") + " is-clickable";
-    const dest = s ? SHAPE_BY_KEY[s.rotates_to] : null;
-    const m = Number(t.members_count) || 0;
-    return `
-    <article class="${cardCls}" data-record-id="${escHtml(t.record_id)}" data-display-id="${displayId(idx)}" tabindex="0" role="button" aria-label="${escHtml(t.name)} — open detail">
-      <div class="alch-card-tag">
-        <span class="ct-id">SHAPE-${displayId(idx)}</span>
-        <span class="ct-sep">·</span>
-        <span class="ct-kind ct-kind-${escHtml(teamKind(t))}">${escHtml(teamKind(t))}</span>
-        <span class="ct-sep">·</span>
-        <span>${escHtml(s ? s.name : domainLabel(t.domain))}</span>
-        <span class="ct-sep">·</span>
-        <span>${escHtml(domainLabel(t.domain))}</span>
-        ${t.is_mentor ? `<span class="ct-sep">·</span><span>mentor</span>` : ""}
-      </div>
-      <div class="alch-card-shape"><canvas data-shape-fam="${s ? s.fam : 0}" data-shape-seed="${escAttr(t.record_id)}"></canvas></div>
-      <div class="alch-card-name">${escHtml(t.name)}</div>
-      <div class="alch-card-rule"></div>
-      <div class="alch-card-meta">
-        <div class="alch-card-meta-row"><span class="cm-k">focus</span><span class="cm-v">${escHtml(t.focus)}</span></div>
-        <div class="alch-card-meta-row"><span class="cm-k">lead</span><span class="cm-v">${escHtml(t.lead)}</span></div>
-        <div class="alch-card-meta-row"><span class="cm-k">team</span><span class="cm-v">${m} ${m === 1 ? "person" : "people"}</span></div>
-        <div class="alch-card-meta-row"><span class="cm-k">geo</span><span class="cm-v">${escHtml(t.geo)}</span></div>
-        ${links.join("")}
-      </div>
-    </article>`;
+  const cards = records.map((r, idx) => {
+    if (r._kind === "person") return personCardHtml(r, idx);
+    return teamCardHtml(r, idx);
   }).join("");
-  const grid = teams.length
+  const grid = records.length
     ? `<div class="alch-specimens">${cards}</div>`
     : `<p class="alch-pf-pick">no ${escHtml(filter)} records yet — switch to the <strong>profile</strong> tab and use <strong>add</strong> to create one.</p>`;
   state.canvas.innerHTML = `
     ${chips}
     ${grid}
     <p class="alch-callout"><strong>shapes · v0.1</strong><br/>
-    Each card is a team or project in its current shape (week ${WEEK_NOW}). At week 1 every record sits in its starting shape — the one inherited from its domain skillset. See <strong>legend</strong> for the full vocabulary.</p>
+    Each card is a team, project or individual in its current shape (week ${WEEK_NOW}). Teams render as their starting domain shape; projects share the team vocabulary with a stitched rim; individuals render as a portrait medallion.</p>
   `;
   // Wire the kind filter chips.
   for (const btn of state.canvas.querySelectorAll(".alch-shapes-chip[data-shapes-filter]")) {
@@ -365,6 +347,86 @@ function renderShapes() {
       renderShapes();
     });
   }
+  // Wire the dossier export button.
+  const dossierBtn = document.getElementById("dossier-export-png");
+  if (dossierBtn) dossierBtn.addEventListener("click", exportDossier);
+}
+
+function teamCardHtml(t, idx) {
+  const s = shapeForTeam(t);
+  const links = [];
+  const gh   = t?.links?.github;
+  const repo = t?.links?.repo;
+  const x    = t?.links?.x;
+  if (repo && GH_REPO_RE.test(repo)) {
+    links.push(`<div class="alch-card-meta-row"><span class="cm-k">repo</span><span class="cm-v"><a href="https://github.com/${escHtml(repo)}" data-external class="alch-card-repo-link">${escHtml(repo)}</a></span></div>`);
+  }
+  if (gh) links.push(`<div class="alch-card-meta-row"><span class="cm-k">github</span><span class="cm-v"><a href="https://github.com/${escHtml(gh)}" data-external>${escHtml(gh)}</a></span></div>`);
+  if (x)  links.push(`<div class="alch-card-meta-row"><span class="cm-k">x</span><span class="cm-v"><a href="https://x.com/${escHtml(x)}" data-external>@${escHtml(x)}</a></span></div>`);
+  if (!gh && !x && !repo) links.push(`<div class="alch-card-meta-row"><span class="cm-k">links</span><span class="cm-v" style="opacity:0.55">— not yet submitted</span></div>`);
+  const cardCls = (t.is_mentor ? "alch-card alch-card-mentor" : "alch-card") + " is-clickable";
+  const m = Number(t.members_count) || 0;
+  const kind = teamKind(t);
+  return `
+    <article class="${cardCls}" data-record-id="${escHtml(t.record_id)}" data-display-id="${displayId(idx)}" tabindex="0" role="button" aria-label="${escHtml(t.name)} — open detail">
+      <div class="alch-card-tag">
+        <span class="ct-id">SHAPE-${displayId(idx)}</span>
+        <span class="ct-sep">·</span>
+        <span class="ct-kind ct-kind-${escHtml(kind)}">${escHtml(kind)}</span>
+        <span class="ct-sep">·</span>
+        <span>${escHtml(s ? s.name : domainLabel(t.domain))}</span>
+        <span class="ct-sep">·</span>
+        <span>${escHtml(domainLabel(t.domain))}</span>
+        ${t.is_mentor ? `<span class="ct-sep">·</span><span>mentor</span>` : ""}
+      </div>
+      <div class="alch-card-shape"><canvas data-shape-fam="${s ? s.fam : 0}" data-shape-kind="${escAttr(kind)}" data-shape-seed="${escAttr(t.record_id)}"></canvas></div>
+      <div class="alch-card-name">${escHtml(t.name)}</div>
+      <div class="alch-card-rule"></div>
+      <div class="alch-card-meta">
+        <div class="alch-card-meta-row"><span class="cm-k">focus</span><span class="cm-v">${escHtml(t.focus)}</span></div>
+        <div class="alch-card-meta-row"><span class="cm-k">lead</span><span class="cm-v">${escHtml(t.lead)}</span></div>
+        <div class="alch-card-meta-row"><span class="cm-k">team</span><span class="cm-v">${m} ${m === 1 ? "person" : "people"}</span></div>
+        <div class="alch-card-meta-row"><span class="cm-k">geo</span><span class="cm-v">${escHtml(t.geo)}</span></div>
+        ${links.join("")}
+      </div>
+    </article>`;
+}
+
+function personCardHtml(p, idx) {
+  // People don't have a shape vocabulary — derive a fam from their
+  // record_id hash purely so the per-family rotation/symmetry/specimen
+  // varies between individuals. The shader sees u_kind=2 and overrides
+  // the silhouette to a circle medallion regardless.
+  const fam = Math.abs(hashStr(p.record_id || "_")) % 6;
+  const links = [];
+  const gh = p?.links?.github;
+  const x  = p?.links?.x;
+  const w  = p?.links?.website;
+  const li = p?.links?.linkedin;
+  if (gh) links.push(`<div class="alch-card-meta-row"><span class="cm-k">github</span><span class="cm-v"><a href="https://github.com/${escHtml(gh)}" data-external>${escHtml(gh)}</a></span></div>`);
+  if (x)  links.push(`<div class="alch-card-meta-row"><span class="cm-k">x</span><span class="cm-v"><a href="https://x.com/${escHtml(x.replace(/^@/, ""))}" data-external>@${escHtml(x.replace(/^@/, ""))}</a></span></div>`);
+  if (w)  links.push(`<div class="alch-card-meta-row"><span class="cm-k">site</span><span class="cm-v"><a href="${escHtml(w.startsWith("http") ? w : `https://${w}`)}" data-external>${escHtml(w.replace(/^https?:\/\//, ""))}</a></span></div>`);
+  if (li) links.push(`<div class="alch-card-meta-row"><span class="cm-k">linkedin</span><span class="cm-v"><a href="https://linkedin.com/in/${escHtml(li)}" data-external>${escHtml(li)}</a></span></div>`);
+  if (!gh && !x && !w && !li) links.push(`<div class="alch-card-meta-row"><span class="cm-k">links</span><span class="cm-v" style="opacity:0.55">— not yet submitted</span></div>`);
+  return `
+    <article class="alch-card is-clickable alch-card-person" data-record-id="${escHtml(p.record_id)}" data-display-id="${displayId(idx)}" tabindex="0" role="button" aria-label="${escHtml(p.name)} — open profile">
+      <div class="alch-card-tag">
+        <span class="ct-id">PERSON-${displayId(idx)}</span>
+        <span class="ct-sep">·</span>
+        <span class="ct-kind ct-kind-person">individual</span>
+        <span class="ct-sep">·</span>
+        <span>${escHtml(domainLabel(p.domain))}</span>
+      </div>
+      <div class="alch-card-shape"><canvas data-shape-fam="${fam}" data-shape-kind="person" data-shape-seed="${escAttr(p.record_id)}"></canvas></div>
+      <div class="alch-card-name">${escHtml(p.name)}</div>
+      <div class="alch-card-rule"></div>
+      <div class="alch-card-meta">
+        <div class="alch-card-meta-row"><span class="cm-k">role</span><span class="cm-v">${escHtml(p.role || "—")}</span></div>
+        <div class="alch-card-meta-row"><span class="cm-k">team</span><span class="cm-v">${escHtml(p.team || "—")}</span></div>
+        <div class="alch-card-meta-row"><span class="cm-k">geo</span><span class="cm-v">${escHtml(p.geo || "—")}</span></div>
+        ${links.join("")}
+      </div>
+    </article>`;
 }
 
 // ─── pulse ───────────────────────────────────────────────────────────
@@ -577,6 +639,1090 @@ function setConstellationHover(stage, recordId, on) {
   });
 }
 
+// ─── calendar (cohort presence over time) ─────────────────────────────
+// Gantt-style canvas: rows = people grouped by team, columns = days from
+// program start → end. Each row shows the person's overall window as a
+// filled bar in their hash-derived hue; absences render as a striped
+// overlay so the visual delta between "in cohort" and "actually here"
+// reads at a glance. A vertical "today" marker pulses on top.
+//
+// Scales: the canvas is built at full size (no clipping) so when the
+// cohort grows from 17 to 50 the layout just adds more rows. The CSS
+// container scrolls; export captures the FULL canvas regardless of
+// visible portion.
+//
+// Export: PNG via canvas.toDataURL → Electron IPC save dialog. PNG is
+// the most messaging-app-friendly format (renders inline in iMessage,
+// Slack, Discord). PDF as bonus through electron's printToPDF if asked.
+const CAL_DAY_W      = 22;        // pixel width per day column
+const CAL_ROW_H      = 32;        // height per person row
+const CAL_HEADER_H   = 148;       // top — concurrent strip + month band + week labels + day numbers
+const CAL_DENSITY_H  = 32;        // height of the concurrent-headcount strip above the grid
+const CAL_TEAM_H     = 36;        // height of team-group header rows
+const CAL_LEFT_W     = 240;       // left column — person labels
+const CAL_PAD_R      = 40;
+const CAL_PAD_B      = 40;
+const CAL_FOOTER_H   = 64;        // bottom — date span + legend
+const CAL_BG         = "#0b0a08";
+const CAL_BG_LANE    = "#15120e";
+const CAL_RULE       = "rgba(245, 243, 238, 0.07)";
+const CAL_RULE_WEEK  = "rgba(245, 243, 238, 0.14)";
+const CAL_INK_1      = "#f5f3ee";
+const CAL_INK_2      = "#b8b4ab";
+const CAL_INK_3      = "#7a7368";
+const CAL_INK_4      = "#3a3833";
+const CAL_OXIDE      = "#c44025";  // today marker
+
+// Reasonable defaults for the program; if cohort data exposes a
+// programStart/end later this lifts straight from there.
+const CAL_PROGRAM_START = "2026-05-18";
+const CAL_PROGRAM_END   = "2026-07-18";
+
+function isoToDate(s) {
+  if (!s) return null;
+  // Accept either "YYYY-MM-DD" or full ISO. Force UTC midnight to avoid TZ drift.
+  const m = String(s).match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+}
+function daysBetween(a, b) {
+  return Math.round((b - a) / 86400000);
+}
+function fmtShortDate(d) {
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).toLowerCase();
+}
+function fmtMonth(d) {
+  return d.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).toLowerCase();
+}
+
+function buildCalendarRows(cohort) {
+  // Group people by team. Within each group: lead first, then alpha by name.
+  // Teams without people are skipped — only show what's populated.
+  // "_orphan" group (team: null) renders LAST as "individuals (no team)".
+  const teams = cohort.teams || [];
+  const people = cohort.people || [];
+  const teamById = new Map(teams.map(t => [t.record_id, t]));
+
+  const buckets = new Map();
+  for (const p of people) {
+    const key = p.team || "_orphan";
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(p);
+    // Also list the person under each secondary team they touch. We
+    // tag the clone with __secondary so the renderer can render them
+    // with reduced emphasis (no "lead" indicator, etc.).
+    const sec = Array.isArray(p.secondary_teams) ? p.secondary_teams : [];
+    for (const stk of sec) {
+      if (!stk) continue;
+      if (!buckets.has(stk)) buckets.set(stk, []);
+      buckets.get(stk).push({ ...p, __secondary: true, role: p.role === "lead" ? null : p.role });
+    }
+  }
+  for (const arr of buckets.values()) {
+    arr.sort((a, b) => {
+      const al = a.role === "lead" ? 0 : 1;
+      const bl = b.role === "lead" ? 0 : 1;
+      if (al !== bl) return al - bl;
+      return String(a.name || a.record_id).localeCompare(String(b.name || b.record_id));
+    });
+  }
+
+  // Order team groups: leads-with-cards first (by team name), orphan last.
+  const orderedKeys = Array.from(buckets.keys()).filter(k => k !== "_orphan").sort((a, b) => {
+    const ta = teamById.get(a)?.name || a;
+    const tb = teamById.get(b)?.name || b;
+    return String(ta).localeCompare(String(tb));
+  });
+  if (buckets.has("_orphan")) orderedKeys.push("_orphan");
+
+  const rows = [];
+  for (const key of orderedKeys) {
+    const t = key === "_orphan"
+      ? { record_id: "_orphan", name: "individuals", kind: null }
+      : (teamById.get(key) || { record_id: key, name: key, kind: null });
+    rows.push({ type: "team", team: t });
+    for (const p of buckets.get(key)) rows.push({ type: "person", person: p, team: t });
+  }
+  return rows;
+}
+
+function renderCalendar() {
+  const start = isoToDate(CAL_PROGRAM_START);
+  const end   = isoToDate(CAL_PROGRAM_END);
+  const numDays = daysBetween(start, end) + 1;
+  const rows = buildCalendarRows(state.cohort || {});
+  // Compute total height: each team header + each person row.
+  let bodyH = 0;
+  for (const r of rows) bodyH += (r.type === "team" ? CAL_TEAM_H : CAL_ROW_H);
+  const w = CAL_LEFT_W + numDays * CAL_DAY_W + CAL_PAD_R;
+  const h = CAL_HEADER_H + bodyH + CAL_FOOTER_H + CAL_PAD_B;
+
+  const numPeople = rows.filter(r => r.type === "person").length;
+  const numTeamGroups = rows.filter(r => r.type === "team").length;
+
+  state.canvas.innerHTML = `
+    <header class="cal-page-head">
+      <div class="cal-page-title">cohort calendar</div>
+      <div class="cal-page-sub">${escHtml(fmtShortDate(start))} → ${escHtml(fmtShortDate(end))} · ${numPeople} individuals · ${numTeamGroups} groups</div>
+      <div class="cal-page-actions">
+        <button id="cal-export-png" class="cal-action" type="button">export png</button>
+        <button id="cal-export-pdf" class="cal-action" type="button">export pdf</button>
+      </div>
+    </header>
+    <div class="cal-scroll">
+      <canvas id="cal-canvas" width="${w}" height="${h}" style="width:${w}px; height:${h}px;"></canvas>
+    </div>
+    <p class="alch-callout"><strong>cohort calendar · v0.1</strong><br/>
+    each row is one individual. the filled bar is their overall window in the cohort; striped sections are absences (vacations, conferences, remote weeks). a vertical mark shows today. export the full canvas as a PNG to share over messaging — renders inline in iMessage/Slack/Discord.</p>
+  `;
+
+  const cnv = document.getElementById("cal-canvas");
+  if (!cnv) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cnv.width  = Math.round(w * dpr);
+  cnv.height = Math.round(h * dpr);
+  cnv.style.width  = w + "px";
+  cnv.style.height = h + "px";
+  const ctx = cnv.getContext("2d");
+  ctx.scale(dpr, dpr);
+  drawCalendar(ctx, w, h, rows, start, end, numDays);
+}
+
+function drawCalendar(ctx, W, H, rows, start, end, numDays) {
+  // Background.
+  ctx.fillStyle = CAL_BG;
+  ctx.fillRect(0, 0, W, H);
+
+  const gridX = CAL_LEFT_W;
+  const gridY = CAL_HEADER_H;
+  const gridW = numDays * CAL_DAY_W;
+  // Compute body height from rows.
+  let bodyH = 0;
+  for (const r of rows) bodyH += (r.type === "team" ? CAL_TEAM_H : CAL_ROW_H);
+  const gridH = bodyH;
+
+  // ── Concurrent-headcount strip ─────────────────────────────────────
+  // Above the date axis: a 32px-tall area chart of "people on-site per
+  // day" — counts every person whose window covers the day AND who is
+  // not in an absence for that day. Glance-readable density.
+  drawHeadcountStrip(ctx, rows, start, numDays, gridX);
+
+  // ── Month band — italic Iowan, with a thin baseline above
+  ctx.strokeStyle = CAL_RULE;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(gridX, CAL_DENSITY_H + 14 + 0.5);
+  ctx.lineTo(gridX + numDays * CAL_DAY_W, CAL_DENSITY_H + 14 + 0.5);
+  ctx.stroke();
+  ctx.font = `italic 22px "Iowan Old Style", "Hoefler Text", Georgia, serif`;
+  ctx.fillStyle = CAL_INK_1;
+  ctx.textBaseline = "alphabetic";
+  let segStart = 0;
+  let segDate = new Date(start);
+  for (let i = 1; i <= numDays; i++) {
+    const d = new Date(start);
+    d.setUTCDate(start.getUTCDate() + i);
+    const isLast = i === numDays;
+    if (d.getUTCMonth() !== segDate.getUTCMonth() || isLast) {
+      const endIdx = isLast ? numDays : i;
+      const x = gridX + segStart * CAL_DAY_W;
+      const wSeg = (endIdx - segStart) * CAL_DAY_W;
+      ctx.fillStyle = CAL_INK_1;
+      ctx.globalAlpha = 0.88;
+      ctx.fillText(fmtMonth(segDate), x + 6, CAL_DENSITY_H + 12);
+      ctx.globalAlpha = 1;
+      // Right hairline of month
+      ctx.strokeStyle = CAL_RULE_WEEK;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x + wSeg + 0.5, CAL_HEADER_H - 28);
+      ctx.lineTo(x + wSeg + 0.5, CAL_HEADER_H + gridH);
+      ctx.stroke();
+      segStart = i;
+      segDate = d;
+    }
+  }
+
+  // ── Week zebra (alternating tint per week) ─────────────────────────
+  // Identify Monday boundaries and group days into weeks. Even-numbered
+  // weeks get a subtle warm tint behind them so the body reads as a
+  // run of 7-day bands rather than a sea of identical day cells.
+  // Also tints weekends a touch deeper INSIDE each week.
+  let weekIdx = 0;
+  let weekStartCol = 0;
+  for (let i = 0; i <= numDays; i++) {
+    const d = new Date(start);
+    d.setUTCDate(start.getUTCDate() + i);
+    const isMonday = i > 0 && d.getUTCDay() === 1;
+    const isLast = i === numDays;
+    if (isMonday || isLast) {
+      const x = gridX + weekStartCol * CAL_DAY_W;
+      const w = (i - weekStartCol) * CAL_DAY_W;
+      if (weekIdx % 2 === 1) {
+        // odd weeks (1, 3, 5, ...) — subtle warm wash
+        ctx.fillStyle = "rgba(245, 243, 238, 0.022)";
+        ctx.fillRect(x, gridY, w, gridH);
+      }
+      weekStartCol = i;
+      weekIdx++;
+    }
+  }
+  // Weekend deeper tint on top of the zebra so Sat/Sun pop within weeks.
+  for (let i = 0; i < numDays; i++) {
+    const d = new Date(start);
+    d.setUTCDate(start.getUTCDate() + i);
+    const dow = d.getUTCDay();
+    if (dow === 0 || dow === 6) {
+      const x = gridX + i * CAL_DAY_W;
+      ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
+      ctx.fillRect(x, gridY, CAL_DAY_W, gridH);
+    }
+  }
+
+  // ── Week labels (W01, W02, ...) above the day numbers ─────────────
+  // Anchored to each Monday's column. Italic Iowan, 16px, near-pure
+  // ink — these are the primary horizontal landmarks at any zoom.
+  weekIdx = 0;
+  for (let i = 0; i < numDays; i++) {
+    const d = new Date(start);
+    d.setUTCDate(start.getUTCDate() + i);
+    if (i === 0 || d.getUTCDay() === 1) {
+      weekIdx++;
+      const x = gridX + i * CAL_DAY_W;
+      ctx.font = `italic 16px "Iowan Old Style", "Hoefler Text", Georgia, serif`;
+      ctx.fillStyle = CAL_INK_1;
+      ctx.globalAlpha = 0.90;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "alphabetic";
+      ctx.fillText(`w${String(weekIdx).padStart(2, "0")}`, x + 6, CAL_HEADER_H - 38);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // ── Day-of-week single-letter strip (M T W T F S S) above numbers ─
+  // Adds another anchor when scanning the dense grid. Tiny mono.
+  ctx.font = `500 8.5px "Geist Mono", ui-monospace, monospace`;
+  ctx.textBaseline = "alphabetic";
+  ctx.textAlign = "center";
+  const dowLetters = ["S", "M", "T", "W", "T", "F", "S"];
+  for (let i = 0; i < numDays; i++) {
+    const d = new Date(start);
+    d.setUTCDate(start.getUTCDate() + i);
+    const x = gridX + i * CAL_DAY_W;
+    const dow = d.getUTCDay();
+    const isWeekend = dow === 0 || dow === 6;
+    ctx.fillStyle = CAL_INK_1;
+    ctx.globalAlpha = isWeekend ? 0.32 : 0.55;
+    ctx.fillText(dowLetters[dow], x + CAL_DAY_W / 2, CAL_HEADER_H - 24);
+  }
+  ctx.globalAlpha = 1;
+
+  // ── Day-number strip + verticals ───────────────────────────────────
+  // Numbers bumped to 12.5px monospace; Monday + first-of-month verticals
+  // are STRONG (1.5px @ ~0.36 opacity) so weeks separate visibly.
+  ctx.font = `500 12.5px "Geist Mono", "Berkeley Mono", ui-monospace, monospace`;
+  ctx.textBaseline = "alphabetic";
+  for (let i = 0; i < numDays; i++) {
+    const d = new Date(start);
+    d.setUTCDate(start.getUTCDate() + i);
+    const x = gridX + i * CAL_DAY_W;
+    const day = d.getUTCDate();
+    const dow = d.getUTCDay();
+    const isMonday = dow === 1;
+    const isFirstOfMonth = day === 1;
+    const isWeekend = dow === 0 || dow === 6;
+    ctx.fillStyle = CAL_INK_1;
+    ctx.globalAlpha = isMonday || isFirstOfMonth ? 0.95 : (isWeekend ? 0.45 : 0.72);
+    ctx.textAlign = "center";
+    ctx.fillText(String(day), x + CAL_DAY_W / 2, CAL_HEADER_H - 8);
+    ctx.globalAlpha = 1;
+    ctx.textAlign = "left";
+    // Verticals: STRONG on Monday + first-of-month, faint hairline daily.
+    if (isFirstOfMonth) {
+      ctx.strokeStyle = "rgba(245, 243, 238, 0.42)";
+      ctx.lineWidth = 2;
+    } else if (isMonday) {
+      ctx.strokeStyle = "rgba(245, 243, 238, 0.36)";
+      ctx.lineWidth = 1.5;
+    } else {
+      ctx.strokeStyle = "rgba(245, 243, 238, 0.05)";
+      ctx.lineWidth = 1;
+    }
+    ctx.beginPath();
+    ctx.moveTo(x + 0.5, CAL_HEADER_H - 16);
+    ctx.lineTo(x + 0.5, CAL_HEADER_H + gridH);
+    ctx.stroke();
+  }
+  // Closing vertical at the very right edge.
+  ctx.strokeStyle = "rgba(245, 243, 238, 0.36)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(gridX + numDays * CAL_DAY_W + 0.5, CAL_HEADER_H - 16);
+  ctx.lineTo(gridX + numDays * CAL_DAY_W + 0.5, CAL_HEADER_H + gridH);
+  ctx.stroke();
+
+  // ── Body rows ───────────────────────────────────────────────────────
+  let y = gridY;
+  ctx.textBaseline = "middle";
+  for (const r of rows) {
+    if (r.type === "team") {
+      // Stronger separator above each team — full-width rule + an
+      // oxide tick at the left so the group reads as a new section.
+      ctx.strokeStyle = CAL_RULE_WEEK;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, y + 0.5);
+      ctx.lineTo(W, y + 0.5);
+      ctx.stroke();
+      // Per-team accent square — 4px wide, hash-derived from team id.
+      // Reads as a tiny "flag" before the team name; matches the colour
+      // of bars belonging to people on that team so the eye threads
+      // group → individuals visually.
+      const tcol = personColors(r.team.record_id || r.team.name || "_");
+      ctx.fillStyle = hsl(tcol.hue, 0.70, 0.55, 1);
+      ctx.fillRect(6, y + 10, 4, CAL_TEAM_H - 20);
+      // Team label: MONO 11px UPPERCASE with strong tracking — same
+      // chrome-label voice as the rest of the editorial UI. Indents
+      // and italic serif are reserved for people rows.
+      ctx.font = `500 11px "Geist Mono", "Berkeley Mono", ui-monospace, monospace`;
+      ctx.fillStyle = CAL_INK_1;
+      ctx.globalAlpha = 0.95;
+      ctx.textAlign = "left";
+      const label = String(r.team.name || "—").toUpperCase();
+      // letter-spacing isn't supported on ctx.fillText directly — fake
+      // it by drawing each char and advancing by measureText+track.
+      const track = 1.4;          // px of extra tracking per char
+      let lx = 18;
+      for (const ch of label) {
+        ctx.fillText(ch, lx, y + CAL_TEAM_H / 2 + 1);
+        lx += ctx.measureText(ch).width + track;
+      }
+      // "project" subtag rendered in a smaller mono italic at the
+      // right of the team name when applicable.
+      if (r.team.kind === "project") {
+        ctx.font = `italic 9.5px "Geist Mono", ui-monospace, monospace`;
+        ctx.globalAlpha = 0.55;
+        ctx.fillText("· project", lx + 6, y + CAL_TEAM_H / 2 + 1);
+      }
+      ctx.globalAlpha = 1;
+      y += CAL_TEAM_H;
+      continue;
+    }
+    // Person row
+    const p = r.person;
+    const colors = personColors(p.record_id || p.name || "_");
+    drawPersonRow(ctx, p, colors, gridX, y, gridW, numDays, start, end);
+    y += CAL_ROW_H;
+  }
+
+  // Bottom hairline of grid
+  ctx.strokeStyle = CAL_RULE_WEEK;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, y + 0.5);
+  ctx.lineTo(W, y + 0.5);
+  ctx.stroke();
+
+  // ── "Today" indicator — column band + line + glow + label puck ────
+  // Always painted: if today's within the program window it gets the
+  // full vertical band + ink puck at top. If today's BEFORE the window
+  // (counting down to start) we render a small "+N days" tag at the
+  // very left of the grid header.
+  const today = new Date();
+  const todayUTC = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()));
+  const dayIdx = daysBetween(start, todayUTC);
+  if (dayIdx >= 0 && dayIdx < numDays) {
+    const x = gridX + dayIdx * CAL_DAY_W;
+    // Full column band — 4% white wash spanning header + grid.
+    ctx.fillStyle = "rgba(245, 243, 238, 0.05)";
+    ctx.fillRect(x, CAL_HEADER_H - 18, CAL_DAY_W, gridH + 18);
+    // Glow stroke around the column edges, soft falloff.
+    const grad = ctx.createLinearGradient(x - 6, 0, x + CAL_DAY_W + 6, 0);
+    grad.addColorStop(0,   "rgba(196, 64, 37, 0)");
+    grad.addColorStop(0.5, "rgba(196, 64, 37, 0.10)");
+    grad.addColorStop(1,   "rgba(196, 64, 37, 0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(x - 6, CAL_HEADER_H - 18, CAL_DAY_W + 12, gridH + 18);
+    // Sharp 1px oxide hairline at center of column.
+    const xc = x + CAL_DAY_W / 2;
+    ctx.strokeStyle = "rgba(196, 64, 37, 0.85)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(xc, CAL_HEADER_H - 6);
+    ctx.lineTo(xc, CAL_HEADER_H + gridH);
+    ctx.stroke();
+    // "TODAY" puck at the top of the column.
+    ctx.fillStyle = CAL_OXIDE;
+    const puckW = 50;
+    const puckH = 16;
+    const puckX = Math.max(gridX, xc - puckW / 2);
+    const puckY = CAL_HEADER_H - 18;
+    roundRect(ctx, puckX, puckY, puckW, puckH, 8);
+    ctx.fill();
+    ctx.fillStyle = "#0a0908";
+    ctx.font = `600 9px "Geist Mono", "Berkeley Mono", ui-monospace, monospace`;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    ctx.fillText("TODAY", puckX + puckW / 2, puckY + puckH / 2 + 0.5);
+    ctx.textAlign = "left";
+  } else if (dayIdx < 0) {
+    // Today is before the program start — show countdown.
+    const daysUntil = -dayIdx;
+    const label = `T-${daysUntil} day${daysUntil === 1 ? "" : "s"}`;
+    ctx.fillStyle = CAL_OXIDE;
+    const puckW = ctx.measureText ? Math.max(72, label.length * 8 + 24) : 96;
+    const puckH = 16;
+    const puckX = gridX + 6;
+    const puckY = CAL_HEADER_H - 18;
+    roundRect(ctx, puckX, puckY, puckW, puckH, 8);
+    ctx.fill();
+    ctx.fillStyle = "#0a0908";
+    ctx.font = `600 9px "Geist Mono", "Berkeley Mono", ui-monospace, monospace`;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    ctx.fillText(label, puckX + puckW / 2, puckY + puckH / 2 + 0.5);
+    ctx.textAlign = "left";
+  }
+
+  // ── Footer: program span + legend ──────────────────────────────────
+  const footerY = CAL_HEADER_H + gridH + 18;
+  ctx.font = `400 10px "Geist Mono", ui-monospace, monospace`;
+  ctx.fillStyle = CAL_INK_3;
+  ctx.globalAlpha = 0.7;
+  ctx.textBaseline = "alphabetic";
+  ctx.textAlign = "left";
+  ctx.fillText(`shape rotator · summer 2026 · ${fmtShortDate(start)} – ${fmtShortDate(end)}`, 20, footerY);
+
+  // Legend: filled bar = present · striped = absence · vertical = today
+  const legX = 20;
+  const legY = footerY + 22;
+  ctx.fillStyle = CAL_INK_2;
+  // present swatch
+  ctx.globalAlpha = 0.75;
+  ctx.fillRect(legX, legY - 6, 30, 8);
+  ctx.fillStyle = CAL_INK_2;
+  ctx.fillText("present", legX + 36, legY);
+  // absence swatch — diagonal stripes via pattern
+  const absX = legX + 90;
+  ctx.save();
+  ctx.fillStyle = CAL_INK_4;
+  ctx.fillRect(absX, legY - 6, 30, 8);
+  ctx.strokeStyle = CAL_INK_2;
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  for (let i = 0; i < 30; i += 4) {
+    ctx.moveTo(absX + i, legY + 2);
+    ctx.lineTo(absX + i + 8, legY - 6);
+  }
+  ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle = CAL_INK_2;
+  ctx.fillText("absent", absX + 36, legY);
+  // today swatch
+  const todX = absX + 90;
+  ctx.strokeStyle = CAL_OXIDE;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(todX + 8, legY - 8);
+  ctx.lineTo(todX + 8, legY + 4);
+  ctx.stroke();
+  ctx.fillStyle = CAL_INK_2;
+  ctx.fillText("today", todX + 18, legY);
+  ctx.globalAlpha = 1;
+}
+
+function drawPersonRow(ctx, person, colors, gridX, rowY, gridW, numDays, start, end) {
+  // Left label — name on top, role/email tiny underneath
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  // Italic Iowan for names — smaller than the team header (which is
+  // 11px mono CAPS in white) + indented further so each row reads as
+  // "child of the team group above it" rather than competing with it.
+  ctx.font = `italic 13.5px "Iowan Old Style", "Hoefler Text", Georgia, serif`;
+  ctx.fillStyle = CAL_INK_1;
+  ctx.globalAlpha = 0.85;
+  const name = person.name || person.record_id || "—";
+  ctx.fillText(name, 34, rowY + CAL_ROW_H / 2);
+  ctx.globalAlpha = 1;
+
+  // Lane background — subtle dark fill across the whole grid for this row
+  ctx.fillStyle = CAL_BG_LANE;
+  ctx.fillRect(gridX, rowY + 4, gridW, CAL_ROW_H - 8);
+
+  // Window: dates_start..dates_end clipped to [start, end]
+  const pStart = isoToDate(person.dates_start);
+  const pEnd   = isoToDate(person.dates_end);
+  if (!pStart || !pEnd) return;
+  const winStartIdx = Math.max(0, daysBetween(start, pStart));
+  const winEndIdx   = Math.min(numDays - 1, daysBetween(start, pEnd));
+  if (winEndIdx < winStartIdx) return;
+  const winX = gridX + winStartIdx * CAL_DAY_W;
+  const winW = (winEndIdx - winStartIdx + 1) * CAL_DAY_W;
+
+  // Filled window bar — hash-derived gradient using the person's two hues
+  const grad = ctx.createLinearGradient(winX, rowY, winX + winW, rowY);
+  grad.addColorStop(0, hsl(colors.hue, 0.68, 0.52, 0.85));
+  grad.addColorStop(1, hsl(colors.hue2, 0.72, 0.56, 0.85));
+  ctx.fillStyle = grad;
+  ctx.fillRect(winX, rowY + 6, winW, CAL_ROW_H - 12);
+
+  // Inner glow line at top + bottom for the editorial sheen
+  ctx.fillStyle = "rgba(255,255,255,0.10)";
+  ctx.fillRect(winX, rowY + 6, winW, 1);
+  ctx.fillStyle = "rgba(0,0,0,0.18)";
+  ctx.fillRect(winX, rowY + CAL_ROW_H - 7, winW, 1);
+
+  // ── Absences: overlay striped pattern on each absence range ────────
+  const absences = Array.isArray(person.absences) ? person.absences : [];
+  for (const ab of absences) {
+    const aS = isoToDate(ab.start);
+    const aE = isoToDate(ab.end);
+    if (!aS || !aE) continue;
+    const aStartIdx = Math.max(winStartIdx, daysBetween(start, aS));
+    const aEndIdx   = Math.min(winEndIdx, daysBetween(start, aE));
+    if (aEndIdx < aStartIdx) continue;
+    const aX = gridX + aStartIdx * CAL_DAY_W;
+    const aW = (aEndIdx - aStartIdx + 1) * CAL_DAY_W;
+    // Knock out the present color
+    ctx.fillStyle = CAL_BG_LANE;
+    ctx.fillRect(aX, rowY + 6, aW, CAL_ROW_H - 12);
+    // Diagonal stripe overlay so it reads as "scheduled absence" not gap
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(aX, rowY + 6, aW, CAL_ROW_H - 12);
+    ctx.clip();
+    ctx.strokeStyle = `rgba(245, 243, 238, 0.18)`;
+    ctx.lineWidth = 0.8;
+    const stripeSpacing = 6;
+    const rowTop = rowY + 6;
+    const rowBot = rowY + CAL_ROW_H - 6;
+    const h = rowBot - rowTop;
+    ctx.beginPath();
+    for (let sx = aX - h; sx < aX + aW + h; sx += stripeSpacing) {
+      ctx.moveTo(sx, rowBot);
+      ctx.lineTo(sx + h, rowTop);
+    }
+    ctx.stroke();
+    ctx.restore();
+    // Faint outline at the gap edges
+    ctx.strokeStyle = `rgba(245, 243, 238, 0.18)`;
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(aX + 0.5, rowY + 6);
+    ctx.lineTo(aX + 0.5, rowY + CAL_ROW_H - 6);
+    ctx.moveTo(aX + aW - 0.5, rowY + 6);
+    ctx.lineTo(aX + aW - 0.5, rowY + CAL_ROW_H - 6);
+    ctx.stroke();
+  }
+}
+
+// Draws the concurrent-headcount strip above the calendar grid — an
+// area chart showing how many people are on-site per day. Counts every
+// person whose dates_start..dates_end window covers the day AND who
+// isn't in an absence range that day. Glance-readable density.
+function drawHeadcountStrip(ctx, rows, start, numDays, gridX) {
+  // Build per-day count
+  const counts = new Array(numDays).fill(0);
+  let maxCount = 0;
+  for (const r of rows) {
+    if (r.type !== "person") continue;
+    const p = r.person;
+    const pStart = isoToDate(p.dates_start);
+    const pEnd   = isoToDate(p.dates_end);
+    if (!pStart || !pEnd) continue;
+    const s = Math.max(0, daysBetween(start, pStart));
+    const e = Math.min(numDays - 1, daysBetween(start, pEnd));
+    const absences = (Array.isArray(p.absences) ? p.absences : [])
+      .map(ab => ({ s: isoToDate(ab.start), e: isoToDate(ab.end) }))
+      .filter(ab => ab.s && ab.e);
+    for (let i = s; i <= e; i++) {
+      const day = new Date(start);
+      day.setUTCDate(start.getUTCDate() + i);
+      // Skip if inside any absence range.
+      let absent = false;
+      for (const ab of absences) {
+        if (day >= ab.s && day <= ab.e) { absent = true; break; }
+      }
+      if (!absent) counts[i]++;
+    }
+    if (e >= s && e < numDays) maxCount = Math.max(maxCount, counts[e]);
+  }
+  for (const c of counts) if (c > maxCount) maxCount = c;
+  if (maxCount === 0) return;
+
+  const stripY = 6;
+  const stripH = CAL_DENSITY_H - 10;
+  // Area chart — step path at top of each day column.
+  ctx.save();
+  const grad = ctx.createLinearGradient(0, stripY, 0, stripY + stripH);
+  grad.addColorStop(0,   "rgba(245, 243, 238, 0.16)");
+  grad.addColorStop(1,   "rgba(245, 243, 238, 0.02)");
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(gridX, stripY + stripH);
+  for (let i = 0; i < numDays; i++) {
+    const v = counts[i] / maxCount;
+    const top = stripY + (1 - v) * stripH;
+    const x0 = gridX + i * CAL_DAY_W;
+    const x1 = x0 + CAL_DAY_W;
+    ctx.lineTo(x0, top);
+    ctx.lineTo(x1, top);
+  }
+  ctx.lineTo(gridX + numDays * CAL_DAY_W, stripY + stripH);
+  ctx.closePath();
+  ctx.fill();
+  // Top outline at 50% so the silhouette reads sharp.
+  ctx.beginPath();
+  ctx.strokeStyle = "rgba(245, 243, 238, 0.40)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i < numDays; i++) {
+    const v = counts[i] / maxCount;
+    const top = stripY + (1 - v) * stripH;
+    const x0 = gridX + i * CAL_DAY_W;
+    const x1 = x0 + CAL_DAY_W;
+    if (i === 0) ctx.moveTo(x0, top);
+    else ctx.lineTo(x0, top);
+    ctx.lineTo(x1, top);
+  }
+  ctx.stroke();
+  // Label at the top-left of the strip
+  ctx.font = `500 9px "Geist Mono", "Berkeley Mono", ui-monospace, monospace`;
+  ctx.fillStyle = "rgba(245, 243, 238, 0.55)";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText(`on-site / day · peak ${maxCount}`, gridX + 6, stripY + 10);
+  ctx.restore();
+}
+
+// Tiny helper: rounded rectangle path.
+function roundRect(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+// FNV-1a hash → two hues in [0,1) for a person, matching the shader's
+// per-team palette derivation so each individual's color in the calendar
+// echoes their shape on the grid.
+function personColors(seed) {
+  let h = 2166136261 >>> 0;
+  const s = String(seed || "");
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  const a =  h         & 0xff;
+  const b = (h >>> 8)  & 0xff;
+  return {
+    hue:  a / 255,
+    hue2: (a / 255 + 0.33 + (b / 255) * 0.34) % 1,
+  };
+}
+
+function hsl(h, s, l, a) {
+  // h/s/l in [0,1]; alpha 0..1 — returns rgba() string
+  function f(n) {
+    const k = (n + h * 12) % 12;
+    return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+  }
+  const r = Math.round(f(0) * 255);
+  const g = Math.round(f(8) * 255);
+  const b = Math.round(f(4) * 255);
+  return `rgba(${r},${g},${b},${a == null ? 1 : a})`;
+}
+
+function wireCalendar() {
+  const pngBtn = document.getElementById("cal-export-png");
+  if (pngBtn) pngBtn.addEventListener("click", () => exportCalendar("png"));
+  const pdfBtn = document.getElementById("cal-export-pdf");
+  if (pdfBtn) pdfBtn.addEventListener("click", () => exportCalendar("pdf"));
+}
+
+// ── Dossier export — multi-card PNG of all teams + projects ─────────
+// Renders each team/project as a card with shape glyph, kind tag,
+// focus, lead, and member count to a single offscreen canvas, then
+// pipes through the same IPC PNG save flow.
+async function exportDossier() {
+  const all = (state.cohort?.teams || []).slice();
+  const people = state.cohort?.people || [];
+  if (all.length === 0) return;
+  // Sort teams first by kind (team > project), then alpha.
+  all.sort((a, b) => {
+    const ak = (a.kind || "team") === "team" ? 0 : 1;
+    const bk = (b.kind || "team") === "team" ? 0 : 1;
+    if (ak !== bk) return ak - bk;
+    return String(a.name).localeCompare(String(b.name));
+  });
+
+  // Group people by team id so each card can list members inline.
+  const peopleByTeam = new Map();
+  for (const p of people) {
+    const k = p.team;
+    if (!k) continue;
+    if (!peopleByTeam.has(k)) peopleByTeam.set(k, []);
+    peopleByTeam.get(k).push(p);
+  }
+  // Sort each team's members: lead first, then alpha.
+  for (const arr of peopleByTeam.values()) {
+    arr.sort((a, b) => {
+      const al = a.role === "lead" ? 0 : 1;
+      const bl = b.role === "lead" ? 0 : 1;
+      if (al !== bl) return al - bl;
+      return String(a.name || a.record_id).localeCompare(String(b.name || b.record_id));
+    });
+  }
+
+  // Layout: 3-column grid, card 380×260 + 24px gutter, plus header.
+  const cols = 3;
+  const cardW = 380;
+  const cardH = 260;
+  const gap = 24;
+  const padL = 56;
+  const padT = 140;     // header
+  const padR = 56;
+  const padB = 56;
+  const rows = Math.ceil(all.length / cols);
+  const W = padL + cols * cardW + (cols - 1) * gap + padR;
+  const H = padT + rows * cardH + (rows - 1) * gap + padB;
+
+  const cnv = document.createElement("canvas");
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cnv.width  = Math.round(W * dpr);
+  cnv.height = Math.round(H * dpr);
+  const ctx = cnv.getContext("2d");
+  ctx.scale(dpr, dpr);
+
+  // Background — same warm radial as the app.
+  const bg = ctx.createRadialGradient(W / 2, -100, 100, W / 2, H / 2, Math.max(W, H));
+  bg.addColorStop(0, "#17140f");
+  bg.addColorStop(1, "#0a0908");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // ── Header ─────────────────────────────────────────────────────────
+  ctx.textBaseline = "alphabetic";
+  ctx.textAlign = "left";
+  ctx.fillStyle = CAL_INK_1;
+  ctx.font = `italic 44px "Iowan Old Style", "Hoefler Text", Georgia, serif`;
+  ctx.globalAlpha = 0.96;
+  ctx.fillText("cohort dossier", padL, 64);
+  ctx.font = `400 13px "Geist Mono", "Berkeley Mono", ui-monospace, monospace`;
+  ctx.globalAlpha = 0.55;
+  const nTeams = all.filter(t => (t.kind || "team") === "team").length;
+  const nProjects = all.filter(t => (t.kind || "team") === "project").length;
+  ctx.fillText(`shape rotator · summer 2026 · ${nTeams} teams · ${nProjects} projects · ${people.length} individuals`,
+               padL, 90);
+  ctx.globalAlpha = 1;
+  // Hairline rule under header
+  ctx.strokeStyle = "rgba(245, 243, 238, 0.16)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padL, padT - 24 + 0.5);
+  ctx.lineTo(W - padR, padT - 24 + 0.5);
+  ctx.stroke();
+
+  // ── Cards ──────────────────────────────────────────────────────────
+  for (let i = 0; i < all.length; i++) {
+    const t = all[i];
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const x = padL + col * (cardW + gap);
+    const y = padT + row * (cardH + gap);
+    drawDossierCard(ctx, t, peopleByTeam.get(t.record_id) || [], x, y, cardW, cardH);
+  }
+
+  // Footer
+  ctx.fillStyle = CAL_INK_3;
+  ctx.globalAlpha = 0.55;
+  ctx.font = `400 11px "Geist Mono", ui-monospace, monospace`;
+  ctx.textAlign = "right";
+  ctx.fillText("generated by shape rotator field guide · " + new Date().toISOString().slice(0, 10),
+               W - padR, H - 28);
+  ctx.globalAlpha = 1;
+  ctx.textAlign = "left";
+
+  // Export through the same IPC path as the calendar — but pass a
+  // distinct filename so the saved file isn't called "cohort-calendar".
+  const dataUrl = cnv.toDataURL("image/png");
+  const stamp = new Date().toISOString().slice(0, 10);
+  if (window.api?.exportCalendar) {
+    const r = await window.api.exportCalendar({
+      format: "png",
+      dataUrl,
+      filename: `cohort-dossier-${stamp}`,
+    });
+    if (r?.ok) {
+      const c = document.querySelector(".alch-callout");
+      if (c) {
+        const note = document.createElement("div");
+        note.style.cssText = "margin-top:8px;color:#f5f3ee;opacity:0.85;font-family:var(--ed-mono);font-size:11px;letter-spacing:0.16em;text-transform:lowercase";
+        note.textContent = `dossier saved → ${r.path}`;
+        c.appendChild(note);
+        setTimeout(() => { try { note.remove(); } catch {} }, 6000);
+      }
+    }
+  } else {
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `cohort-dossier-${stamp}.png`;
+    a.click();
+  }
+}
+
+function drawDossierCard(ctx, team, members, x, y, w, h) {
+  // Card background — slight vertical gradient
+  const grad = ctx.createLinearGradient(x, y, x, y + h);
+  grad.addColorStop(0, "#15120e");
+  grad.addColorStop(1, "#0e0c0a");
+  ctx.fillStyle = grad;
+  ctx.fillRect(x, y, w, h);
+  // Top hairline rule (matches the app's "border-top only" card style)
+  ctx.strokeStyle = "rgba(245, 243, 238, 0.10)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x, y + 0.5);
+  ctx.lineTo(x + w, y + 0.5);
+  ctx.stroke();
+
+  // ── Tag row: SHAPE-NN · KIND · DOMAIN ─────────────────────────────
+  ctx.font = `500 9.5px "Geist Mono", ui-monospace, monospace`;
+  ctx.fillStyle = CAL_INK_1;
+  ctx.globalAlpha = 0.55;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  const tagParts = [
+    String(team.record_id || "").toUpperCase(),
+    String(team.kind || "team").toUpperCase(),
+    String(team.domain || "—").toUpperCase(),
+  ];
+  // Pseudo letter-spacing
+  let tx = x + 20;
+  const tag = tagParts.join("  ·  ");
+  for (const ch of tag) {
+    ctx.fillText(ch, tx, y + 26);
+    tx += ctx.measureText(ch).width + 1.2;
+  }
+  ctx.globalAlpha = 1;
+
+  // ── Shape glyph (left) ─────────────────────────────────────────────
+  const glyphSize = 88;
+  const glyphX = x + 20;
+  const glyphY = y + 42;
+  drawShapeGlyph(ctx, team.shape, team.kind, team.record_id || team.name || "_",
+                 glyphX, glyphY, glyphSize);
+
+  // ── Name (right, large italic Iowan) ──────────────────────────────
+  const textX = glyphX + glyphSize + 22;
+  ctx.font = `italic 26px "Iowan Old Style", "Hoefler Text", Georgia, serif`;
+  ctx.fillStyle = CAL_INK_1;
+  ctx.globalAlpha = 0.96;
+  ctx.fillText(team.name || "—", textX, glyphY + 26);
+
+  // ── Focus (italic, smaller) ────────────────────────────────────────
+  if (team.focus) {
+    ctx.font = `italic 13.5px "Iowan Old Style", "Hoefler Text", Georgia, serif`;
+    ctx.globalAlpha = 0.78;
+    wrapText(ctx, team.focus, textX, glyphY + 50, w - (textX - x) - 20, 18, 3);
+  }
+  ctx.globalAlpha = 1;
+
+  // ── Meta strip (LEAD · GEO · #MEMBERS) at bottom-left ─────────────
+  // Columns sized to fit the longest expected values; values truncate with ellipsis.
+  const colLeadX    = x + 20;
+  const colGeoX     = x + 150;
+  const colMembersX = x + 305;
+  const colLeadW    = (colGeoX - colLeadX) - 10;     // 120
+  const colGeoW     = (colMembersX - colGeoX) - 10;  // 145
+  const colMembersW = (x + w - 20) - colMembersX;    // ~55
+
+  ctx.font = `500 9.5px "Geist Mono", ui-monospace, monospace`;
+  ctx.fillStyle = CAL_INK_1;
+  ctx.globalAlpha = 0.42;
+  ctx.fillText("LEAD",    colLeadX,    y + h - 70);
+  ctx.fillText("GEO",     colGeoX,     y + h - 70);
+  ctx.fillText("MEMBERS", colMembersX, y + h - 70);
+  ctx.globalAlpha = 0.88;
+  ctx.font = `500 12px "Geist Mono", ui-monospace, monospace`;
+  ctx.fillText(truncateText(ctx, team.lead || "—", colLeadW), colLeadX, y + h - 52);
+  ctx.fillText(truncateText(ctx, team.geo  || "—", colGeoW),  colGeoX,  y + h - 52);
+  ctx.fillText(truncateText(ctx, String(members.length || team.members_count || 0), colMembersW), colMembersX, y + h - 52);
+
+  // ── Member chips ───────────────────────────────────────────────────
+  if (members.length) {
+    ctx.font = `400 10px "Geist Mono", ui-monospace, monospace`;
+    ctx.fillStyle = CAL_INK_1;
+    ctx.globalAlpha = 0.42;
+    ctx.fillText("ROSTER", x + 20, y + h - 28);
+    ctx.globalAlpha = 0.85;
+    ctx.font = `italic 12px "Iowan Old Style", Georgia, serif`;
+    const rosterX = x + 70;
+    const rosterW = (x + w - 20) - rosterX;
+    const names = members.slice(0, 5).map(m => m.name || m.record_id).join("  ·  ");
+    const suffix = members.length > 5 ? `  · +${members.length - 5}` : "";
+    ctx.fillText(truncateText(ctx, names + suffix, rosterW), rosterX, y + h - 28);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawShapeGlyph(ctx, shapeKey, kind, seed, x, y, size) {
+  const cx = x + size / 2;
+  const cy = y + size / 2;
+  const r = size * 0.42;
+  const colors = personColors(seed);
+  const c1 = hsl(colors.hue, 0.70, 0.55, 1);
+  const c2 = hsl(colors.hue2, 0.72, 0.60, 1);
+
+  // Soft gradient backdrop (square card behind the silhouette)
+  ctx.fillStyle = "rgba(245, 243, 238, 0.02)";
+  ctx.fillRect(x, y, size, size);
+
+  // Silhouette path per shape key. Kind=project gets stitched stroke;
+  // person doesn't apply here (dossier is teams + projects only).
+  ctx.lineWidth = 4;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  ctx.beginPath();
+  switch (shapeKey) {
+    case "torus":
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      break;
+    case "scaffold":
+      ctx.rect(cx - r * 0.82, cy - r * 0.82, r * 1.64, r * 1.64);
+      break;
+    case "hex": {
+      for (let i = 0; i < 6; i++) {
+        const a = (Math.PI / 3) * i - Math.PI / 2;
+        const px = cx + Math.cos(a) * r;
+        const py = cy + Math.sin(a) * r;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      break;
+    }
+    case "prism":
+      ctx.moveTo(cx, cy - r);
+      ctx.lineTo(cx + r * 0.866, cy + r * 0.5);
+      ctx.lineTo(cx - r * 0.866, cy + r * 0.5);
+      ctx.closePath();
+      break;
+    case "meridian":
+      ctx.arc(cx, cy, r, Math.PI, 0, false);
+      ctx.lineTo(cx - r, cy);
+      ctx.closePath();
+      break;
+    case "plate":
+      ctx.moveTo(cx, cy - r);
+      ctx.lineTo(cx + r, cy);
+      ctx.lineTo(cx, cy + r);
+      ctx.lineTo(cx - r, cy);
+      ctx.closePath();
+      break;
+    default:
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  }
+  // Stroke twice: thick halo in c2, sharp in c1.
+  if (kind === "project") ctx.setLineDash([4, 3]);
+  ctx.strokeStyle = c2;
+  ctx.globalAlpha = 0.35;
+  ctx.lineWidth = 10;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = c1;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // Inner dot
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.15, 0, Math.PI * 2);
+  ctx.fillStyle = c2;
+  ctx.fill();
+}
+
+function wrapText(ctx, text, x, y, maxW, lineH, maxLines) {
+  const words = String(text).split(/\s+/);
+  let line = "";
+  let lines = 0;
+  for (let n = 0; n < words.length; n++) {
+    const test = line ? line + " " + words[n] : words[n];
+    if (ctx.measureText(test).width > maxW && line) {
+      ctx.fillText(line, x, y + lines * lineH);
+      lines++;
+      if (lines >= maxLines) {
+        ctx.fillText("…", x + ctx.measureText(line).width + 2, y + (lines - 1) * lineH);
+        return;
+      }
+      line = words[n];
+    } else {
+      line = test;
+    }
+  }
+  if (line) ctx.fillText(line, x, y + lines * lineH);
+}
+
+function truncateText(ctx, text, maxW) {
+  const s = String(text);
+  if (ctx.measureText(s).width <= maxW) return s;
+  const ell = "…";
+  let lo = 0, hi = s.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (ctx.measureText(s.slice(0, mid) + ell).width <= maxW) lo = mid;
+    else hi = mid - 1;
+  }
+  return s.slice(0, lo) + ell;
+}
+
+async function exportCalendar(format) {
+  const cnv = document.getElementById("cal-canvas");
+  if (!cnv) return;
+  if (format === "png") {
+    // Snapshot the canvas as PNG. Routed through Electron IPC so we get
+    // a native save dialog instead of a browser blob download.
+    const dataUrl = cnv.toDataURL("image/png");
+    if (window.api?.exportCalendar) {
+      const r = await window.api.exportCalendar({ format: "png", dataUrl });
+      announceExport(r);
+    } else {
+      // Fallback for non-Electron contexts: trigger a download link.
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = `cohort-calendar-${new Date().toISOString().slice(0,10)}.png`;
+      a.click();
+    }
+  } else if (format === "pdf") {
+    // For PDF we ask the main process to embed the canvas image into a
+    // single-page PDF at the canvas's pixel dimensions. printToPDF would
+    // capture the WHOLE app chrome which is not what we want.
+    const dataUrl = cnv.toDataURL("image/png");
+    if (window.api?.exportCalendar) {
+      const r = await window.api.exportCalendar({ format: "pdf", dataUrl, w: cnv.width, h: cnv.height });
+      announceExport(r);
+    }
+  }
+}
+function announceExport(r) {
+  if (!r) return;
+  if (r.ok) {
+    // Toast-style transient confirmation using the existing callout.
+    const c = document.querySelector(".alch-callout");
+    if (c) {
+      const note = document.createElement("div");
+      note.style.cssText = "margin-top:8px;color:#f5f3ee;opacity:0.85;font-family:var(--ed-mono);font-size:11px;letter-spacing:0.16em;text-transform:lowercase";
+      note.textContent = `saved → ${r.path}`;
+      c.appendChild(note);
+      setTimeout(() => { try { note.remove(); } catch {} }, 6000);
+    }
+  } else if (r.reason !== "cancelled") {
+    console.warn("[calendar] export failed:", r);
+  }
+}
+
 // ─── detail page (full-canvas team / project profile) ────────────────
 // Replaces the side drawer for a roomier read. Same data, more space:
 // hero (shape glyph + name + kind), about, credentials, links, members,
@@ -619,7 +1765,7 @@ function renderDetail(recordId) {
     </header>
 
     <section class="alch-detail-hero">
-      <div class="alch-detail-shape">${s ? `<canvas data-shape-fam="${s.fam}" data-shape-seed="${escAttr(team.record_id)}"></canvas>` : ""}</div>
+      <div class="alch-detail-shape">${s ? `<canvas data-shape-fam="${s.fam}" data-shape-kind="${escAttr(teamKind(team))}" data-shape-seed="${escAttr(team.record_id)}"></canvas>` : ""}</div>
       <div class="alch-detail-hero-text">
         <h2 class="alch-detail-name">${escHtml(team.name)}</h2>
         <p class="alch-detail-focus">${escHtml(team.focus || "—")}</p>
@@ -778,7 +1924,7 @@ function openDrawer(recordId) {
   body.innerHTML = `
     <div class="alch-drawer-tag">${tagBits.join("")}</div>
     <div class="alch-drawer-name">${escHtml(team.name)}</div>
-    <div class="alch-drawer-shape">${s ? `<canvas data-shape-fam="${s.fam}" data-shape-seed="${escAttr(team.record_id)}"></canvas>` : ""}</div>
+    <div class="alch-drawer-shape">${s ? shapeSvgByFam(s.fam, hashStr(team.record_id)) : ""}</div>
     <div class="alch-drawer-rule"></div>
     <section class="alch-drawer-section">
       <h4>about</h4>

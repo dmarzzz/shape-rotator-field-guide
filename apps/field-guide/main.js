@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, nativeTheme, screen, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, nativeTheme, screen, shell } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 
@@ -215,6 +215,72 @@ ipcMain.handle("fg:get-app-info", () => ({
   version: app.getVersion(),
   isPackaged: app.isPackaged,
 }));
+
+// ─── calendar export — PNG / PDF ────────────────────────────────────
+// Renderer hands us a base64 data URL (the canvas snapshot). We pop a
+// native save dialog so the user can pick where the file lands. PNG
+// is recommended for messaging — renders inline in iMessage, Slack,
+// Discord. PDF route uses Electron's offscreen window + printToPDF
+// with a sized HTML wrapper around the same image.
+function dataUrlToBuffer(dataUrl) {
+  const m = String(dataUrl || "").match(/^data:.+;base64,(.+)$/);
+  if (!m) throw new Error("invalid data url");
+  return Buffer.from(m[1], "base64");
+}
+ipcMain.handle("fg:export-calendar", async (_e, opts = {}) => {
+  const format = opts.format === "pdf" ? "pdf" : "png";
+  const stamp = new Date().toISOString().slice(0, 10);
+  // Caller can pass `filename` to override the default; used by the
+  // dossier export so the file doesn't land as "cohort-calendar".
+  const baseName = (typeof opts.filename === "string" && opts.filename.trim())
+    ? opts.filename.trim()
+    : `cohort-calendar-${stamp}`;
+  const defaultName = `${baseName}.${format}`;
+  try {
+    const win = BrowserWindow.getFocusedWindow();
+    const { filePath, canceled } = await dialog.showSaveDialog(win, {
+      title: format === "pdf" ? "Export cohort calendar (PDF)" : "Export cohort calendar (PNG)",
+      defaultPath: path.join(app.getPath("desktop"), defaultName),
+      filters: format === "pdf"
+        ? [{ name: "PDF", extensions: ["pdf"] }]
+        : [{ name: "PNG image", extensions: ["png"] }],
+    });
+    if (canceled || !filePath) return { ok: false, reason: "cancelled" };
+
+    if (format === "png") {
+      const buf = dataUrlToBuffer(opts.dataUrl);
+      fs.writeFileSync(filePath, buf);
+      return { ok: true, path: filePath };
+    }
+
+    // PDF path: open an offscreen BrowserWindow at the canvas's pixel
+    // size, render the image, ask the chromium engine for a PDF, save.
+    const w = Math.max(800, Math.round(opts.w || 1400));
+    const h = Math.max(600, Math.round(opts.h || 1100));
+    const pdfWin = new BrowserWindow({
+      show: false,
+      width: Math.min(w, 4000),
+      height: Math.min(h, 4000),
+      webPreferences: { offscreen: false, sandbox: false, contextIsolation: true },
+    });
+    const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+      html,body{margin:0;padding:0;background:#0b0a08;}
+      img{display:block;width:${w}px;height:${h}px;}
+      @page{size:${w}px ${h}px;margin:0;}
+    </style></head><body><img src="${opts.dataUrl}"></body></html>`;
+    await pdfWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
+    const pdfBuf = await pdfWin.webContents.printToPDF({
+      pageSize: { width: w * 1000, height: h * 1000 },   // micrometers
+      printBackground: true,
+      preferCSSPageSize: true,
+    });
+    fs.writeFileSync(filePath, pdfBuf);
+    pdfWin.destroy();
+    return { ok: true, path: filePath };
+  } catch (e) {
+    return { ok: false, reason: "export_failed", detail: String(e && e.message || e) };
+  }
+});
 
 app.whenReady().then(() => {
   createWindow();

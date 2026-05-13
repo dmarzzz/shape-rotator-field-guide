@@ -2396,19 +2396,31 @@ function drawPlaceNames(ctx) {
   // top 1-2 themes joined with a `·`. If a peer has no derivable themes
   // (e.g., empty or single-page) we render nothing here; the legend still
   // carries the peer name + count for identification.
-  for (const c of populated) {
+  // Sort by page-count descending so the biggest territory claims first
+  // when two adjacent labels would collide. (Was unsorted, which let
+  // small territories print on top of larger ones at random.)
+  const themedSorted = populated
+    .filter(c => (c.peerThemes || []).length > 0)
+    .slice()
+    .sort((a, b) => (b.pageCount || 0) - (a.pageCount || 0));
+  for (const c of themedSorted) {
     const themes = (c.peerThemes || []).slice(0, 2);
     if (themes.length === 0) continue;
-    const [x, y] = worldToScreen(c.cx, c.cy);
+    // Skip the literal "(diffuse)" string at the L1 tier — it appears
+    // multiple times across diffuse clusters and adds noise without
+    // information. The territory colour already encodes "this exists".
     const themeText = themes.join("  ·  ");
-    ctx.font = `italic 600 24px "Iowan Old Style", "Hoefler Text", Georgia, "Times New Roman", serif`;
+    if (/^\(diffuse\)\s*$/.test(themeText)) continue;
+    const [x, y] = worldToScreen(c.cx, c.cy);
+    ctx.font = `italic 600 19px "Iowan Old Style", "Hoefler Text", Georgia, "Times New Roman", serif`;
     const w1 = ctx.measureText(themeText).width;
-    const aabb = { x: x - w1 / 2 - 4, y: y - 16, w: w1 + 8, h: 32 };
-    // Paper-color halo (thick stroke) THEN ink fill — gives the label a
-    // legible outline against the colored territory blobs underneath.
+    const aabb = { x: x - w1 / 2 - 4, y: y - 13, w: w1 + 8, h: 26 };
+    // Skip if this label would overlap another already placed. The map
+    // is more legible with fewer-but-readable labels than a dense pile.
+    if (collides(aabb, placed)) continue;
     ctx.lineJoin = "round";
     ctx.miterLimit = 2;
-    ctx.lineWidth = 5;
+    ctx.lineWidth = 4;
     ctx.strokeStyle = "rgba(242, 235, 220, 0.95)";
     ctx.strokeText(themeText, x, y);
     ctx.fillStyle = INK;
@@ -2439,17 +2451,21 @@ function drawPlaceNames(ctx) {
     }
     all.sort((a, b) => b.region.pageCount - a.region.pageCount);
     for (const { region } of all) {
-      const [x, y] = worldToScreen(region.cx, region.cy);
       const conceptTxt = region.conceptName.toLowerCase();
+      // Skip "(diffuse)" at L2 — same reasoning as L1. Multiple diffuse
+      // sub-regions inside one cluster were printing "(diffuse)" 3-4
+      // times across the map; pure noise.
+      if (/^\(diffuse\)\s*$/.test(conceptTxt)) continue;
+      const [x, y] = worldToScreen(region.cx, region.cy);
       const confident = !!region.conceptConfident;
       // Confidence-weighted opacity. Confident → full strength; weak →
       // ~70% so it's clearly a softer call but still legible.
       const conf = confident ? 1.0 : 0.7;
 
-      ctx.font = `italic 500 21px "Iowan Old Style", "Hoefler Text", Georgia, "Times New Roman", serif`;
+      ctx.font = `italic 500 16px "Iowan Old Style", "Hoefler Text", Georgia, "Times New Roman", serif`;
       ctx.letterSpacing = "0.04em";
       const w = ctx.measureText(conceptTxt).width * 1.04;
-      const aabb = { x: x - w / 2 - 4, y: y - 13, w: w + 8, h: 26 };
+      const aabb = { x: x - w / 2 - 4, y: y - 10, w: w + 8, h: 20 };
       if (collides(aabb, placed)) continue;
       // Paper-halo + ink, both modulated by subAlpha and conf so they
       // crossfade in together as the user zooms in.
@@ -3648,10 +3664,16 @@ function renderLegend() {
   const roster = state.peerRoster || [];
   let html = "";
   for (const c of roster) {
+    // Mask local-network hostnames (e.g. `halcyons-MBP-4.lan`,
+    // `something.local`, `something-MacBook-Pro`) so the wall map never
+    // leaks the user's machine name. We keep the swatch + page count so
+    // the row still identifies the network in a way the user can map
+    // (their own pages are everything labelled "this device").
+    const displayName = maskHostname(c.nickname, c.isSelf);
     html += `
       <div class="atl-leg-row" data-pk="${escAttr(c.pk)}">
         <span class="atl-leg-swatch" style="background:${escAttr(c.color)}"></span>
-        <span class="atl-leg-name">${escHtml(c.nickname)}</span>
+        <span class="atl-leg-name">${escHtml(displayName)}</span>
         <span class="atl-leg-count">${c.pageCount}</span>
       </div>`;
   }
@@ -5877,6 +5899,19 @@ function rgbToHex(r, g, b) {
 function truncatePk(pk) {
   if (!pk) return "—";
   return pk.length > 10 ? pk.slice(0, 6) + "…" + pk.slice(-3) : pk;
+}
+
+// Mask local-network hostnames so the wall map never leaks the user's
+// device name. Patterns we catch: `*.lan`, `*.local`, anything matching
+// `*-MacBook-*`, `*-Mac-*`, `*-PC-*`, `*-Laptop-*`. Falls through if
+// the nickname is already a friendly name (e.g. "alice", "dmarz").
+function maskHostname(name, isSelf) {
+  if (!name) return isSelf ? "this device" : "peer";
+  if (isSelf) return "this device";
+  const s = String(name);
+  if (/\.(lan|local|home|internal)\b/i.test(s)) return "device on lan";
+  if (/-(MacBook|Macbook|iMac|Mac|MBP|PC|Laptop|Desktop)/.test(s))   return "device on lan";
+  return s;
 }
 
 function escHtml(s) {
