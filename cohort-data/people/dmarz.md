@@ -3,8 +3,10 @@ record_id: dmarz
 record_type: person
 schema_version: 1
 name: dmarz
-team: null
-role: program steward
+team: searxng-wth-frnds
+secondary_teams:
+  - dcnet
+role: lead
 geo: NYC
 domain: bd-gtm
 email: dmarz@flashbots.net

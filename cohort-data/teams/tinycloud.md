@@ -7,7 +7,7 @@ kind: team
 name: Tinycloud
 focus: user-owned cloud, dstack TEEs
 lead: Sam Gbafa
-members_count: 3
+members_count: 4
 geo: NYC / Berlin / Lisbon
 domain: tee
 shape: hex

@@ -10,4 +10,6 @@ contextBridge.exposeInMainWorld("api", {
   applyAppUpdate:        ()       => ipcRenderer.invoke("fg:apply-update"),
   applyUpdateAndRestart: ()       => ipcRenderer.invoke("fg:apply-update-and-restart"),
   getAppInfo:            ()       => ipcRenderer.invoke("fg:get-app-info"),
+  // calendar export — PNG (recommended for messaging) or PDF.
+  exportCalendar:        (opts)   => ipcRenderer.invoke("fg:export-calendar", opts),
 });
