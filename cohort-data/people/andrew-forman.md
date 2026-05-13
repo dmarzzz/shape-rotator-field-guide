@@ -10,6 +10,10 @@ domain: tee
 email: null
 dates_start: 2026-05-18
 dates_end: 2026-07-18
+absences:
+  - start: 2026-05-16
+    end: 2026-05-26
+    note: vacation
 links:
   github: null
   x: null
