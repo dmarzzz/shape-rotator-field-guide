@@ -58,6 +58,7 @@ const state = {
   rail: null,
   mode: "feed",
   shapesKindFilter: "works",  // "works" (teams + projects) | "people"
+  shapesQuery: "",            // free-text filter applied to the shapes grid
   detailRecordId: null,     // when set, the alchemy canvas renders the full detail page for this team/project
   detailReturnMode: null,   // remembered so the back button knows where to land
   shapeControllers: [],     // active shader-canvas controllers — destroyed before each re-render so GL contexts don't leak
@@ -312,18 +313,29 @@ function renderShapes() {
   const chips = `
     <div class="alch-shapes-toolbar">
       <nav class="alch-shapes-filter" role="tablist" aria-label="filter by kind">
-        <button class="alch-shapes-chip" data-shapes-filter="works"  type="button" aria-selected="${filter === "works"}">teams & projects <span class="ascn">${nWorks}</span></button>
+        <button class="alch-shapes-chip" data-shapes-filter="works"  type="button" aria-selected="${filter === "works"}">teams <span class="ascn">${nWorks}</span></button>
         <button class="alch-shapes-chip" data-shapes-filter="people" type="button" aria-selected="${filter === "people"}">individuals <span class="ascn">${nPeople}</span></button>
       </nav>
+      <div class="alch-shapes-search" role="search">
+        <input id="alch-shapes-search-input" type="search" autocomplete="off" spellcheck="false"
+               placeholder="search ${filter === "people" ? "individuals" : "teams"} by name, focus, geo…"
+               value="${escHtml(state.shapesQuery || "")}" />
+      </div>
       <button id="dossier-export-png" class="cal-action" type="button">export dossier (png)</button>
     </div>
   `;
+  // Build a parallel array of search blobs so the input can hide non-
+  // matching cards in place without re-rendering (preserves focus + caret).
+  const blobs = records.map(r => r._kind === "person"
+    ? searchBlobForPerson(r)
+    : searchBlobForTeam(r, allPeople)
+  );
   const cards = records.map((r, idx) => {
     if (r._kind === "person") return personCardHtml(r, idx);
     return teamCardHtml(r, idx);
   }).join("");
   const grid = records.length
-    ? `<div class="alch-specimens">${cards}</div>`
+    ? `<div class="alch-specimens">${cards}<p class="alch-shapes-empty" hidden>no matches.</p></div>`
     : `<p class="alch-pf-pick">no ${escHtml(filter)} records yet — switch to the <strong>profile</strong> tab and use <strong>add</strong> to create one.</p>`;
   state.canvas.innerHTML = `
     ${chips}
@@ -331,6 +343,11 @@ function renderShapes() {
     <p class="alch-callout"><strong>shapes · v0.1</strong><br/>
     Each card is a team, project or individual in its current shape (week ${WEEK_NOW}). Teams render as their starting domain shape; projects share the team vocabulary with a stitched rim; individuals render as a portrait medallion.</p>
   `;
+  // Attach the search blob to each card so the filter doesn't have to
+  // re-derive it on every keystroke.
+  const cardEls = state.canvas.querySelectorAll(".alch-specimens > .alch-card");
+  cardEls.forEach((el, i) => { el.dataset.searchBlob = blobs[i] || ""; });
+  applyShapesSearch(state.shapesQuery || "");
   // Wire the kind filter chips.
   for (const btn of state.canvas.querySelectorAll(".alch-shapes-chip[data-shapes-filter]")) {
     btn.addEventListener("click", () => {
@@ -340,9 +357,56 @@ function renderShapes() {
       renderShapes();
     });
   }
+  // Wire the search input.
+  const search = document.getElementById("alch-shapes-search-input");
+  if (search) {
+    search.addEventListener("input", () => applyShapesSearch(search.value));
+    search.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && search.value) {
+        search.value = "";
+        applyShapesSearch("");
+      }
+    });
+  }
   // Wire the dossier export button.
   const dossierBtn = document.getElementById("dossier-export-png");
   if (dossierBtn) dossierBtn.addEventListener("click", exportDossier);
+}
+
+function searchBlobForTeam(t, allPeople) {
+  const members = (allPeople || []).filter(p =>
+    p.team === t.record_id ||
+    (Array.isArray(p.secondary_teams) && p.secondary_teams.includes(t.record_id))
+  );
+  return [
+    t.name, t.record_id, t.focus, t.lead, t.geo,
+    domainLabel(t.domain), teamKind(t),
+    ...members.map(m => m.name || m.record_id),
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function searchBlobForPerson(p) {
+  return [
+    p.name, p.record_id, p.role, p.geo, p.team,
+    domainLabel(p.domain),
+    ...(Array.isArray(p.secondary_teams) ? p.secondary_teams : []),
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function applyShapesSearch(query) {
+  state.shapesQuery = query;
+  const q = String(query || "").trim().toLowerCase();
+  const cards = state.canvas?.querySelectorAll(".alch-specimens > .alch-card");
+  if (!cards) return;
+  let visible = 0;
+  for (const c of cards) {
+    const blob = c.dataset.searchBlob || "";
+    const hit = !q || blob.includes(q);
+    c.classList.toggle("is-hidden", !hit);
+    if (hit) visible++;
+  }
+  const empty = state.canvas.querySelector(".alch-shapes-empty");
+  if (empty) empty.hidden = !(q && visible === 0);
 }
 
 function teamCardHtml(t, idx) {
