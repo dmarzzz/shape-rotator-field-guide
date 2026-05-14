@@ -27,4 +27,4 @@ hackathon_note: null
 
 ## about
 
-(public surface — details to be filled in. members: dmarz, cnode, valordragon)
+DCNets, _Dining Cryptographers Networks_, are overlay networking protocols for _anonymous broadcast_ of messages. Multiple promising architectures have been proposed, with varying tradeoffs for scalability and trust. This team will explore the state-of-the-art and productization of the technology, with applications to blockchains and private web search.
