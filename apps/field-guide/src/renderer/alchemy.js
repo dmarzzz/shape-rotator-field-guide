@@ -57,7 +57,7 @@ const state = {
   canvas: null,
   rail: null,
   mode: "feed",
-  shapesKindFilter: "all",  // "all" | "team" | "project" — chip on the shapes grid
+  shapesKindFilter: "works",  // "works" (teams + projects) | "people"
   detailRecordId: null,     // when set, the alchemy canvas renders the full detail page for this team/project
   detailReturnMode: null,   // remembered so the back button knows where to land
   shapeControllers: [],     // active shader-canvas controllers — destroyed before each re-render so GL contexts don't leak
@@ -299,28 +299,21 @@ function renderLegend() {
 function renderShapes() {
   const allTeams  = state.cohort.teams  || [];
   const allPeople = state.cohort.people || [];
-  const nTeam    = allTeams.filter(t => teamKind(t) === "team").length;
-  const nProject = allTeams.filter(t => teamKind(t) === "project").length;
-  const nPerson  = allPeople.length;
-  const nAll     = allTeams.length + allPeople.length;
-  const filter = state.shapesKindFilter;
-  // Build the records list according to the active filter — `person` is
-  // a new top-level filter that swaps the source from teams → people.
-  let records;
-  if (filter === "person")        records = allPeople.map(p => ({ ...p, _kind: "person" }));
-  else if (filter === "team")     records = allTeams.filter(t => teamKind(t) === "team").map(t => ({ ...t, _kind: "team" }));
-  else if (filter === "project")  records = allTeams.filter(t => teamKind(t) === "project").map(t => ({ ...t, _kind: "project" }));
-  else                            records = [
-    ...allTeams.map(t => ({ ...t, _kind: teamKind(t) })),
-    ...allPeople.map(p => ({ ...p, _kind: "person" })),
-  ];
+  const nWorks  = allTeams.length;
+  const nPeople = allPeople.length;
+  // Migrate legacy filter values ("all" | "team" | "project" → "works",
+  // "person" → "people") so old persisted state lands sensibly.
+  const raw = state.shapesKindFilter;
+  const filter = (raw === "people" || raw === "person") ? "people" : "works";
+  state.shapesKindFilter = filter;
+  const records = (filter === "people")
+    ? allPeople.map(p => ({ ...p, _kind: "person" }))
+    : allTeams.map(t => ({ ...t, _kind: teamKind(t) }));
   const chips = `
     <div class="alch-shapes-toolbar">
       <nav class="alch-shapes-filter" role="tablist" aria-label="filter by kind">
-        <button class="alch-shapes-chip" data-shapes-filter="all"     type="button" aria-selected="${filter === "all"}">all <span class="ascn">${nAll}</span></button>
-        <button class="alch-shapes-chip" data-shapes-filter="team"    type="button" aria-selected="${filter === "team"}">teams <span class="ascn">${nTeam}</span></button>
-        <button class="alch-shapes-chip" data-shapes-filter="project" type="button" aria-selected="${filter === "project"}">projects <span class="ascn">${nProject}</span></button>
-        <button class="alch-shapes-chip" data-shapes-filter="person"  type="button" aria-selected="${filter === "person"}">individuals <span class="ascn">${nPerson}</span></button>
+        <button class="alch-shapes-chip" data-shapes-filter="works"  type="button" aria-selected="${filter === "works"}">teams & projects <span class="ascn">${nWorks}</span></button>
+        <button class="alch-shapes-chip" data-shapes-filter="people" type="button" aria-selected="${filter === "people"}">individuals <span class="ascn">${nPeople}</span></button>
       </nav>
       <button id="dossier-export-png" class="cal-action" type="button">export dossier (png)</button>
     </div>
@@ -367,6 +360,18 @@ function teamCardHtml(t, idx) {
   const cardCls = (t.is_mentor ? "alch-card alch-card-mentor" : "alch-card") + " is-clickable";
   const m = Number(t.members_count) || 0;
   const kind = teamKind(t);
+  // People whose primary `team` or `secondary_teams` includes this record.
+  const teamPeople = (state.cohort?.people || []).filter(p =>
+    p.team === t.record_id || (Array.isArray(p.secondary_teams) && p.secondary_teams.includes(t.record_id))
+  );
+  const membersRow = teamPeople.length
+    ? `<div class="alch-card-meta-row alch-card-members-row">
+         <span class="cm-k">${kind === "project" ? "contributors" : "members"}</span>
+         <span class="cm-v">${teamPeople.map(p =>
+           `<button type="button" class="alch-card-member" data-person="${escHtml(p.record_id)}">${escHtml(p.name || p.record_id)}</button>`
+         ).join('<span class="acm-sep">·</span>')}</span>
+       </div>`
+    : "";
   return `
     <article class="${cardCls}" data-record-id="${escHtml(t.record_id)}" data-display-id="${displayId(idx)}" tabindex="0" role="button" aria-label="${escHtml(t.name)} — open detail">
       <div class="alch-card-tag">
@@ -385,8 +390,9 @@ function teamCardHtml(t, idx) {
       <div class="alch-card-meta">
         <div class="alch-card-meta-row"><span class="cm-k">focus</span><span class="cm-v">${escHtml(t.focus)}</span></div>
         <div class="alch-card-meta-row"><span class="cm-k">lead</span><span class="cm-v">${escHtml(t.lead)}</span></div>
-        <div class="alch-card-meta-row"><span class="cm-k">team</span><span class="cm-v">${m} ${m === 1 ? "person" : "people"}</span></div>
+        <div class="alch-card-meta-row"><span class="cm-k">${kind === "project" ? "contributors" : "team"}</span><span class="cm-v">${m} ${m === 1 ? "person" : "people"}</span></div>
         <div class="alch-card-meta-row"><span class="cm-k">geo</span><span class="cm-v">${escHtml(t.geo)}</span></div>
+        ${membersRow}
         ${links.join("")}
       </div>
     </article>`;
@@ -569,6 +575,9 @@ function wireShapeCardClicks() {
       }
     });
   }
+  // Member chips (data-person) embedded in team/project cards — open the
+  // person's detail and stop the click from also firing the card handler.
+  wirePersonLinks(state.canvas);
   // External links inside the cards (repo / github / x) — route through
   // shell.openExternal and stop the click bubbling to the card.
   wireExternalLinks(state.canvas);
@@ -1730,12 +1739,16 @@ function announceExport(r) {
 // the previous mode (typically shapes).
 function renderDetail(recordId) {
   const team = state.cohort?.teams.find(t => t.record_id === recordId);
-  if (!team) {
-    // Record vanished (e.g. cohort republished, slug changed). Bail out
-    // back to the grid rather than showing an empty page.
-    closeDetail();
-    return;
-  }
+  if (team) return renderTeamDetail(team);
+  const person = (state.cohort?.people || []).find(p => p.record_id === recordId);
+  if (person) return renderPersonDetail(person);
+  // Record vanished (e.g. cohort republished, slug changed). Bail out
+  // back to the grid rather than showing an empty page.
+  closeDetail();
+}
+
+function renderTeamDetail(team) {
+  const recordId = team.record_id;
   const s = shapeForTeam(team);
   const kind = teamKind(team);
   const m = Number(team.members_count) || 0;
@@ -1806,7 +1819,7 @@ function renderDetail(recordId) {
           <h3 class="alch-detail-h">${kind === "project" ? "contributors" : "members"} <span class="alch-profile-h-aux">— ${teamPeople.length}</span></h3>
           <ul class="alch-detail-people">
             ${teamPeople.map(p => `
-              <li class="alch-detail-person" data-person="${escHtml(p.record_id)}">
+              <li class="alch-detail-person is-clickable" data-person="${escHtml(p.record_id)}" tabindex="0" role="button" aria-label="open ${escHtml(p.name || p.record_id)}">
                 <span class="adp-name">${escHtml(p.name || p.record_id)}</span>
                 ${p.role ? `<span class="adp-role">${escHtml(p.role)}</span>` : ""}
               </li>
@@ -1830,7 +1843,113 @@ function renderDetail(recordId) {
 
   // Wire interactions.
   state.canvas.querySelector("#alch-detail-back")?.addEventListener("click", closeDetail);
+  wirePersonLinks(state.canvas);
   wireExternalLinks(state.canvas);
+}
+
+function renderPersonDetail(person) {
+  const recordId = person.record_id;
+  const fam = Math.abs(hashStr(recordId || "_")) % 6;
+  const team = person.team
+    ? (state.cohort?.teams || []).find(t => t.record_id === person.team)
+    : null;
+  const secondary = (Array.isArray(person.secondary_teams) ? person.secondary_teams : [])
+    .map(id => (state.cohort?.teams || []).find(t => t.record_id === id))
+    .filter(Boolean);
+  const linksRow = renderDetailLinks(person.links || {});
+  const editUrl = `https://github.com/dmarzzz/shape-rotator-field-guide/edit/main/cohort-data/people/${encodeURIComponent(recordId)}.md?quick_pull=1`;
+  const datesLine = (person.dates_start || person.dates_end)
+    ? `${escHtml(person.dates_start || "—")} → ${escHtml(person.dates_end || "—")}`
+    : "—";
+  const absences = Array.isArray(person.absences) ? person.absences : [];
+
+  state.canvas.innerHTML = `
+    <header class="alch-detail-bar">
+      <button class="alch-detail-back" type="button" id="alch-detail-back" aria-label="back to grid">
+        <span aria-hidden="true">←</span>
+        <span>back</span>
+      </button>
+      <div class="alch-detail-bar-tag">
+        <span>${escHtml(recordId.toUpperCase())}</span>
+        <span class="ct-sep">·</span>
+        <span class="ct-kind ct-kind-person">individual</span>
+        <span class="ct-sep">·</span>
+        <span>${escHtml(domainLabel(person.domain))}</span>
+      </div>
+      <a href="${escHtml(editUrl)}" data-external class="alch-detail-edit" title="edit this record on github">edit on github →</a>
+    </header>
+
+    <section class="alch-detail-hero">
+      <div class="alch-detail-shape"><canvas data-shape-fam="${fam}" data-shape-kind="person" data-shape-seed="${escAttr(recordId)}"></canvas></div>
+      <div class="alch-detail-hero-text">
+        <h2 class="alch-detail-name">${escHtml(person.name || recordId)}</h2>
+        <p class="alch-detail-focus">${escHtml(person.role || "—")}</p>
+        <div class="alch-detail-meta">
+          <span><span class="adm-k">team</span> ${team
+            ? `<button type="button" class="alch-card-member" data-person="${escHtml(team.record_id)}">${escHtml(team.name)}</button>`
+            : "—"}</span>
+          <span class="ct-sep">·</span>
+          <span><span class="adm-k">domain</span> ${escHtml(domainLabel(person.domain))}</span>
+          <span class="ct-sep">·</span>
+          <span><span class="adm-k">geo</span> ${escHtml(person.geo || "—")}</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="alch-detail-grid">
+      <section class="alch-detail-section">
+        <h3 class="alch-detail-h">window</h3>
+        <div class="alch-detail-row"><span class="adr-k">dates</span><span class="adr-v">${datesLine}</span></div>
+        ${absences.length ? `
+          <div class="alch-detail-row"><span class="adr-k">absences</span><span class="adr-v">${absences.map(a =>
+            `${escHtml(a.start || "—")} → ${escHtml(a.end || "—")}${a.note ? ` <span style="opacity:0.55">(${escHtml(a.note)})</span>` : ""}`
+          ).join("<br/>")}</span></div>
+        ` : ""}
+      </section>
+
+      ${secondary.length ? `
+        <section class="alch-detail-section">
+          <h3 class="alch-detail-h">also contributes to</h3>
+          <ul class="alch-detail-people">
+            ${secondary.map(t => `
+              <li class="alch-detail-person is-clickable" data-person="${escHtml(t.record_id)}" tabindex="0" role="button" aria-label="open ${escHtml(t.name)}">
+                <span class="adp-name">${escHtml(t.name)}</span>
+                <span class="adp-role">${escHtml(teamKind(t))}</span>
+              </li>
+            `).join("")}
+          </ul>
+        </section>
+      ` : ""}
+
+      <section class="alch-detail-section">
+        <h3 class="alch-detail-h">links</h3>
+        ${linksRow}
+      </section>
+    </div>
+  `;
+
+  state.canvas.querySelector("#alch-detail-back")?.addEventListener("click", closeDetail);
+  wirePersonLinks(state.canvas);
+  wireExternalLinks(state.canvas);
+}
+
+function wirePersonLinks(root) {
+  // Member chips on team cards / detail and the "team" pill on person
+  // detail share the same hook: data-person="<record_id>" → openDetail.
+  // stopPropagation so clicks inside a card don't also fire the card.
+  const handler = (e) => {
+    const id = (e.currentTarget && e.currentTarget.dataset && e.currentTarget.dataset.person) || "";
+    if (!id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openDetail(id);
+  };
+  for (const el of root.querySelectorAll("[data-person]")) {
+    el.addEventListener("click", handler);
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") handler(e);
+    });
+  }
 }
 
 function renderDetailLinks(L) {

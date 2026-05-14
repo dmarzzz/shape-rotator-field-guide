@@ -6458,6 +6458,42 @@ body[data-active-tab="experimental"] #sidebar { padding-top: 0; }
 }
 .alch-detail-person .adp-name { color: var(--alchemy-paper-warm); }
 .alch-detail-person .adp-role { color: var(--alchemy-ink-mute); font-size: 10.5px; }
+.alch-detail-person.is-clickable {
+  cursor: pointer;
+  transition: border-color 140ms ease, transform 140ms ease, background 140ms ease;
+}
+.alch-detail-person.is-clickable:hover {
+  border-color: var(--alchemy-oxide-bright, #d05332);
+  background: rgba(196,64,37,0.05);
+  transform: translateY(-1px);
+}
+.alch-detail-person.is-clickable:focus-visible {
+  outline: 1px solid var(--alchemy-oxide-bright, #d05332);
+  outline-offset: 2px;
+}
+
+/* Member chips inside team/project cards (data-person buttons). */
+.alch-card-members-row .cm-v {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px;
+}
+.alch-card-member {
+  appearance: none; background: transparent;
+  border: 0; padding: 0; margin: 0;
+  font: inherit; color: var(--alchemy-paper-warm, #f5f3ee);
+  border-bottom: 1px dotted var(--alchemy-rule, rgba(245,243,238,0.18));
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease;
+}
+.alch-card-member:hover {
+  color: var(--alchemy-oxide-bright, #d05332);
+  border-bottom-color: var(--alchemy-oxide-bright, #d05332);
+}
+.alch-card-member:focus-visible {
+  outline: 1px solid var(--alchemy-oxide-bright, #d05332);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.acm-sep { color: var(--alchemy-ink-mute, #7a7368); opacity: 0.55; margin: 0 2px; }
 .alch-detail-clusters {
   display: flex; flex-wrap: wrap; gap: 6px;
 }
