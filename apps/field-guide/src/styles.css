@@ -6156,6 +6156,7 @@ body[data-active-tab="experimental"] #sidebar { padding-top: 0; }
   text-align: center;
 }
 .alch-feed-item.is-github .alch-feed-glyph { color: var(--alchemy-oxide-bright); }
+.alch-feed-item.is-cohort .alch-feed-glyph { color: var(--cyan, #8FEAF2); }
 .alch-feed-item.is-transcript .alch-feed-glyph { color: var(--cyan, #8FEAF2); }
 .alch-feed-body { min-width: 0; }
 .alch-feed-headline {

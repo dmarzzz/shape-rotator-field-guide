@@ -25,7 +25,9 @@ import { getCohortSurface, subscribeToCohortChanges } from "./cohort-source.js";
 const ALCHEMY_LS_KEY  = "srwk:alchemy_mode";
 const PROFILE_LS_KEY  = "srwk:profile_v1";
 const EVENTS_LS_KEY   = "srwk:cohort_events_v1";
+const ETAGS_LS_KEY    = "srwk:cohort_feed_etags_v1";
 const DETAIL_LS_KEY   = "srwk:alchemy_detail_v1";
+const COHORT_META_KEY = "__cohort_commits__";   // synthetic etag bucket key
 const ALCHEMY_MODES   = ["feed", "shapes", "pulse", "constellation", "calendar", "profile"];
 
 const WEEKS_TOTAL = 10;
@@ -67,6 +69,7 @@ const state = {
   events: [],          // normalized feed items, latest-first
   fetchedAt: 0,
   isFetching: false,
+  feedEtags: {},       // { repo|cohortKey: etag } — for If-None-Match short-circuiting
   unsubscribe: null,
   refreshTimer: null,
 };
@@ -2241,6 +2244,14 @@ function loadEventsCache() {
       }
     } catch {}
   }
+  let etagRaw = null;
+  try { etagRaw = localStorage.getItem(ETAGS_LS_KEY); } catch {}
+  if (etagRaw) {
+    try {
+      const parsed = JSON.parse(etagRaw);
+      if (parsed && typeof parsed === "object") state.feedEtags = parsed;
+    } catch {}
+  }
 }
 function saveEventsCache() {
   try {
@@ -2249,6 +2260,9 @@ function saveEventsCache() {
       items: state.events.slice(0, 200),  // cap cache
     }));
   } catch {}
+}
+function saveFeedEtags() {
+  try { localStorage.setItem(ETAGS_LS_KEY, JSON.stringify(state.feedEtags || {})); } catch {}
 }
 
 // ─── github scraper ─────────────────────────────────────────────────
@@ -2274,9 +2288,9 @@ async function refreshFeed({ source = "auto", force = false } = {}) {
     seen.add(repo);
     repos.push({ team_id: t.record_id, repo });
   }
-  if (repos.length === 0) { paintFeedMeta(); return; }
   state.isFetching = true;
-  paintFeedMeta(`fetching · ${repos.length} repos · ${source}`);
+  const sourceCount = repos.length + 1;  // +1 for cohort merge feed
+  paintFeedMeta(`fetching · ${sourceCount} sources · ${source}`);
   const collected = [];
   for (const { team_id, repo } of repos) {
     try {
@@ -2285,6 +2299,14 @@ async function refreshFeed({ source = "auto", force = false } = {}) {
     } catch (e) {
       console.warn(`[alch.feed] github fetch ${repo}:`, e?.message || e);
     }
+  }
+  // Always pull cohort merges too — the feed should show "X added"
+  // even when no team has wired up a links.repo yet.
+  try {
+    const merges = await fetchCohortMergeEvents();
+    collected.push(...merges);
+  } catch (e) {
+    console.warn("[alch.feed] cohort merge fetch:", e?.message || e);
   }
   // Merge with existing cache, dedupe by id, sort latest-first, cap.
   const byId = new Map();
@@ -2295,6 +2317,7 @@ async function refreshFeed({ source = "auto", force = false } = {}) {
   state.fetchedAt = Date.now();
   state.isFetching = false;
   saveEventsCache();
+  saveFeedEtags();
   if (state.mode === "feed") {
     renderFeed();
     wireFeedInteractions();
@@ -2303,14 +2326,66 @@ async function refreshFeed({ source = "auto", force = false } = {}) {
 
 async function fetchGithubRepoEvents(repo, team_id) {
   const url = `https://api.github.com/repos/${repo}/events?per_page=20`;
-  const r = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
+  const headers = { Accept: "application/vnd.github+json" };
+  const prevEtag = state.feedEtags?.[repo];
+  if (prevEtag) headers["If-None-Match"] = prevEtag;
+  const r = await fetch(url, { headers });
+  if (r.status === 304) return [];   // unchanged since last fetch
   if (!r.ok) {
     if (r.status === 404 || r.status === 403) return [];
     throw new Error(`HTTP ${r.status}`);
   }
+  const newEtag = r.headers.get("ETag");
+  if (newEtag) {
+    state.feedEtags = state.feedEtags || {};
+    state.feedEtags[repo] = newEtag;
+  }
   const evs = await r.json();
   if (!Array.isArray(evs)) return [];
   return evs.map(ev => normalizeGithubEvent(ev, repo, team_id)).filter(Boolean);
+}
+
+// Cohort-merge events: every commit on `main` that touched cohort-data/.
+// Surfaced in the feed alongside per-team repo activity so members see
+// "X added to the field guide" without needing to sift PRs themselves.
+async function fetchCohortMergeEvents() {
+  const url = `https://api.github.com/repos/dmarzzz/shape-rotator-field-guide/commits?path=cohort-data&per_page=20`;
+  const headers = { Accept: "application/vnd.github+json" };
+  const prevEtag = state.feedEtags?.[COHORT_META_KEY];
+  if (prevEtag) headers["If-None-Match"] = prevEtag;
+  let r;
+  try { r = await fetch(url, { headers }); }
+  catch (e) { console.warn("[alch.feed] cohort merge fetch:", e?.message || e); return []; }
+  if (r.status === 304) return [];
+  if (!r.ok) {
+    if (r.status !== 404 && r.status !== 403) {
+      console.warn("[alch.feed] cohort merge HTTP", r.status);
+    }
+    return [];
+  }
+  const newEtag = r.headers.get("ETag");
+  if (newEtag) {
+    state.feedEtags = state.feedEtags || {};
+    state.feedEtags[COHORT_META_KEY] = newEtag;
+  }
+  const commits = await r.json();
+  if (!Array.isArray(commits)) return [];
+  return commits.map(normalizeCohortCommit).filter(Boolean);
+}
+
+function normalizeCohortCommit(c) {
+  const sha = c?.sha;
+  if (!sha) return null;
+  const id = `cohort:${sha}`;
+  const at_ms = c.commit?.author?.date ? Date.parse(c.commit.author.date) : Date.now();
+  const actor = c.author?.login || c.commit?.author?.name || "—";
+  const subject = (c.commit?.message || "").split("\n")[0].trim();
+  return {
+    id, source: "cohort", repo: "shape-rotator-field-guide", team_id: null,
+    type: "CohortMergeEvent",
+    actor, at_ms, summary: subject || "cohort updated",
+    url: c.html_url || `https://github.com/dmarzzz/shape-rotator-field-guide/commit/${sha}`,
+  };
 }
 
 function normalizeGithubEvent(ev, repo, team_id) {
@@ -2415,7 +2490,7 @@ function relativeTime(ms) {
   return `${d}d ago`;
 }
 function feedSourceGlyph(src) {
-  return src === "github" ? "◇" : src === "transcript" ? "❍" : "·";
+  return src === "github" ? "◇" : src === "cohort" ? "✦" : src === "transcript" ? "❍" : "·";
 }
 
 function renderFeed() {
@@ -2469,16 +2544,19 @@ function renderFeed() {
 }
 
 function renderFeedItem(ev) {
-  const teamName = teamLabel(ev.team_id);
   const sourceClass = `is-${ev.source}`;
+  // Cohort merge events don't belong to a team — show "field guide" as
+  // the headline label and the commit ref as the repo subline.
+  const headlineLabel = ev.source === "cohort" ? "field guide" : teamLabel(ev.team_id);
+  const sublabel = ev.source === "cohort" ? "cohort-data · main" : (ev.repo || "");
   return `
     <li class="alch-feed-item ${sourceClass}" data-event-id="${escHtml(ev.id)}" data-url="${escHtml(ev.url || "")}">
       <div class="alch-feed-glyph" aria-hidden="true">${feedSourceGlyph(ev.source)}</div>
       <div class="alch-feed-body">
         <div class="alch-feed-headline">
-          <span class="alch-feed-team">${escHtml(teamName)}</span>
+          <span class="alch-feed-team">${escHtml(headlineLabel)}</span>
           <span class="alch-feed-sep">·</span>
-          <span class="alch-feed-repo">${escHtml(ev.repo || "")}</span>
+          <span class="alch-feed-repo">${escHtml(sublabel)}</span>
         </div>
         <div class="alch-feed-summary">
           <span class="alch-feed-actor">${escHtml(ev.actor || "")}</span>
@@ -2494,13 +2572,16 @@ function paintFeedMeta(override) {
   const meta = document.getElementById("alch-feed-meta");
   if (!meta) return;
   const repos = (state.cohort?.teams || []).filter(t => GH_REPO_RE.test(String(t?.links?.repo || "").trim())).length;
+  // Cohort merges always count as a tracked source, even when no team
+  // has wired a links.repo yet, so the meta line never reads "0 sources".
+  const sources = repos + 1;
   if (override) { meta.textContent = override; return; }
   if (state.isFetching) {
     meta.textContent = `fetching…`;
   } else if (state.fetchedAt > 0) {
-    meta.textContent = `${state.events.length} events · ${repos} ${repos === 1 ? "repo" : "repos"} tracked · last fetched ${relativeTime(state.fetchedAt)}`;
+    meta.textContent = `${state.events.length} events · ${sources} ${sources === 1 ? "source" : "sources"} (${repos} ${repos === 1 ? "repo" : "repos"} + cohort merges) · last fetched ${relativeTime(state.fetchedAt)}`;
   } else {
-    meta.textContent = `${repos} ${repos === 1 ? "repo" : "repos"} tracked · waiting on first fetch`;
+    meta.textContent = `${sources} sources tracked · waiting on first fetch`;
   }
 }
 
