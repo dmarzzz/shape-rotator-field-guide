@@ -6,7 +6,6 @@ kind: team
 
 name: Prova
 focus: healthcare AI agents · EHR pilot
-lead: Justin Gaffney
 members_count: 1
 geo: St. Louis
 domain: ai

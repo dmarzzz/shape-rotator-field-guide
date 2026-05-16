@@ -6,7 +6,6 @@ kind: team
 
 name: DealProof
 focus: TEE · PQ · dual-agent contracts
-lead: Khrystian Koci
 members_count: 1
 geo: Rugby UK
 domain: tee

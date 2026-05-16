@@ -7,7 +7,6 @@ kind: project
 # surface fields (visible to all participants)
 name: Trustless TEE
 focus: trustless trusted-execution
-lead: Quintus
 members_count: 1
 geo: null
 domain: tee

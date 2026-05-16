@@ -7,7 +7,6 @@ kind: team
 # surface fields
 name: TvEE RL
 focus: attested reinforcement learning workflows
-lead: Luc Chartier
 members_count: 2
 geo: distributed (PT-based · expects 2+ weeks on-site)
 domain: tee

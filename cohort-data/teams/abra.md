@@ -6,7 +6,6 @@ kind: team
 
 name: Abra
 focus: formal verification · dstack TEE Postgres
-lead: Andrew Forman
 members_count: 1
 geo: NYC
 domain: tee

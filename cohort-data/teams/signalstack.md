@@ -6,7 +6,6 @@ kind: team
 
 name: SignalStack
 focus: TEE + LLM into Signal
-lead: Ron Turetzky
 members_count: 1
 geo: NYC
 domain: tee

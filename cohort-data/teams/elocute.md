@@ -6,7 +6,6 @@ kind: team
 
 name: Elocute
 focus: AI speaking practice · solo reps with scored feedback
-lead: Albiona Hoti
 members_count: 1
 geo: NYC
 domain: ai

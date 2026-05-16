@@ -7,7 +7,6 @@ kind: project
 # surface fields (visible to all participants)
 name: Teleport Router
 focus: cross-network routing
-lead: sevenfloor
 members_count: 2
 geo: null
 domain: crypto

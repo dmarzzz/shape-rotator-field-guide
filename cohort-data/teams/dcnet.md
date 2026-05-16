@@ -7,7 +7,6 @@ kind: project
 # surface fields (visible to all participants)
 name: DCNet
 focus: dining-cryptographer-style anonymity network
-lead: dmarz
 members_count: 3
 geo: null
 domain: crypto

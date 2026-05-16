@@ -6,7 +6,6 @@ kind: team
 
 name: Bitrouter
 focus: P2P LLM router
-lead: Kelsen Liu
 members_count: 2
 geo: NYC / HK
 domain: ai

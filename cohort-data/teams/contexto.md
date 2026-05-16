@@ -6,7 +6,6 @@ kind: team
 
 name: Contexto
 focus: agent context engine
-lead: Shashank Motepalli
 members_count: 3
 geo: ET
 domain: ai

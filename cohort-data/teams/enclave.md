@@ -7,7 +7,6 @@ kind: team
 # surface fields
 name: Enclave
 focus: TEE-enabled medical data sharing
-lead: Khushi Dahiya
 members_count: 1
 geo: Toronto (valid US visa)
 domain: tee

@@ -30,7 +30,6 @@ const PERSON_FIELDS = [
 const TEAM_FIELDS = [
   { key: "name",            label: "name",           type: "text" },
   { key: "focus",           label: "focus",          type: "text" },
-  { key: "lead",            label: "lead",           type: "text" },
   { key: "members_count",   label: "members count",  type: "number" },
   { key: "geo",             label: "geo",            type: "text" },
   { key: "domain",          label: "domain",         type: "text" },

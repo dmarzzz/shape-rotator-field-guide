@@ -6,7 +6,6 @@ kind: team
 
 name: WikiGen
 focus: bio-eng cryptography · curation
-lead: Wiktoria Leks
 members_count: 3
 geo: Bay / TX
 domain: crypto

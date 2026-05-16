@@ -7,7 +7,6 @@ kind: team
 # surface fields (visible to all participants)
 name: Pramaana
 focus: lattice / PQ crypto, ZK proofs
-lead: Vaishnavi Dasika
 members_count: 2
 geo: NYC (Columbia)
 domain: crypto

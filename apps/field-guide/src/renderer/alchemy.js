@@ -1887,25 +1887,22 @@ function drawDossierCard(ctx, team, members, x, y, w, h) {
   }
   ctx.globalAlpha = 1;
 
-  // ── Meta strip (LEAD · GEO · #MEMBERS) at bottom-left ─────────────
-  // Columns sized to fit the longest expected values; values truncate with ellipsis.
-  const colLeadX    = x + 20;
-  const colGeoX     = x + 150;
-  const colMembersX = x + 305;
-  const colLeadW    = (colGeoX - colLeadX) - 10;     // 120
-  const colGeoW     = (colMembersX - colGeoX) - 10;  // 145
-  const colMembersW = (x + w - 20) - colMembersX;    // ~55
+  // ── Meta strip (GEO · #CONTRIBUTORS) at bottom-left ───────────────
+  // Two columns (LEAD column was retired with the lead field). The full
+  // contributor list still renders below as the ROSTER row.
+  const colGeoX        = x + 20;
+  const colMembersX    = x + 220;
+  const colGeoW        = (colMembersX - colGeoX) - 10;
+  const colMembersW    = (x + w - 20) - colMembersX;
 
   ctx.font = `500 9.5px "Geist Mono", ui-monospace, monospace`;
   ctx.fillStyle = CAL_INK_1;
   ctx.globalAlpha = 0.42;
-  ctx.fillText("LEAD",    colLeadX,    y + h - 70);
-  ctx.fillText("GEO",     colGeoX,     y + h - 70);
-  ctx.fillText("MEMBERS", colMembersX, y + h - 70);
+  ctx.fillText("GEO",          colGeoX,     y + h - 70);
+  ctx.fillText("CONTRIBUTORS", colMembersX, y + h - 70);
   ctx.globalAlpha = 0.88;
   ctx.font = `500 12px "Geist Mono", ui-monospace, monospace`;
-  ctx.fillText(truncateText(ctx, team.lead || "—", colLeadW), colLeadX, y + h - 52);
-  ctx.fillText(truncateText(ctx, team.geo  || "—", colGeoW),  colGeoX,  y + h - 52);
+  ctx.fillText(truncateText(ctx, team.geo || "—", colGeoW), colGeoX, y + h - 52);
   ctx.fillText(truncateText(ctx, String(members.length || team.members_count || 0), colMembersW), colMembersX, y + h - 52);
 
   // ── Member chips ───────────────────────────────────────────────────
@@ -2144,7 +2141,7 @@ function renderTeamDetail(team) {
     <div class="alch-detail-grid">
       <section class="alch-detail-section">
         <h3 class="alch-detail-h">about</h3>
-        <div class="alch-detail-row"><span class="adr-k">lead</span><span class="adr-v">${escHtml(team.lead || "—")}</span></div>
+        <div class="alch-detail-row"><span class="adr-k">contributors</span><span class="adr-v">${teamPeople.length} ${teamPeople.length === 1 ? "person" : "people"}</span></div>
         ${team.traction ? `<div class="alch-detail-row"><span class="adr-k">traction</span><span class="adr-v">${escHtml(team.traction)}</span></div>` : ""}
       </section>
 
@@ -2395,7 +2392,6 @@ function openDrawer(recordId) {
     <section class="alch-drawer-section">
       <h4>about</h4>
       <div class="alch-drawer-row"><span class="dr-k">focus</span><span class="dr-v">${escHtml(team.focus || "—")}</span></div>
-      <div class="alch-drawer-row"><span class="dr-k">lead</span><span class="dr-v">${escHtml(team.lead || "—")}</span></div>
       <div class="alch-drawer-row"><span class="dr-k">team</span><span class="dr-v">${m} ${m === 1 ? "person" : "people"}</span></div>
       <div class="alch-drawer-row"><span class="dr-k">geo</span><span class="dr-v">${escHtml(team.geo || "—")}</span></div>
       ${team.traction ? `<div class="alch-drawer-row"><span class="dr-k">traction</span><span class="dr-v">${escHtml(team.traction)}</span></div>` : ""}
@@ -2847,7 +2843,9 @@ function teamFieldsFor(kind) {
   return [
     { key: "name",            label: "name",            type: "text",     placeholder: isProject ? "project name" : "team name" },
     { key: "focus",           label: "focus",           type: "text",     placeholder: isProject ? "what it does, in one line" : "what you're building, in one line" },
-    { key: "lead",            label: "lead",            type: "text",     placeholder: isProject ? "owner / maintainer" : "primary point of contact" },
+    // `lead` retired — team identity is the contributor list, derived from
+    // person records. Anyone with role: "lead" on their person record is
+    // still highlighted in the dossier + member views.
     { key: "members_count",   label: isProject ? "contributors" : "members", type: "number", placeholder: isProject ? "how many people work on it" : "how many on the team" },
     { key: "geo",             label: "geo",             type: "text",     placeholder: "NYC, etc." },
     { key: "domain",          label: "domain",          type: "select",   options: ["crypto", "tee", "ai", "app-ux", "bd-gtm", "design"] },
@@ -2953,7 +2951,6 @@ function loadEditTarget() {
         kind: p.editKind,           // "team" | "project"
         name: "",
         focus: "",
-        lead: "",
         members_count: null,
         geo: "",
         domain: null,
@@ -3285,7 +3282,6 @@ schema_version: 1
 kind: ${kind}
 name: ${quoteYaml(draft.name || "")}
 focus: ${quoteYaml(draft.focus || "")}
-lead: ${quoteYaml(draft.lead || "")}
 members_count: ${draft.members_count == null ? "null" : Number(draft.members_count)}
 geo: ${quoteYaml(draft.geo || "")}
 domain: ${draft.domain || "null"}

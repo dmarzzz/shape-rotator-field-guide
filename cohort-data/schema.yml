@@ -52,7 +52,10 @@ teams:
     - kind              # "team" (default) | "project" — UI discriminator only; both share the team-shaped frontmatter
     - name
     - focus
-    - lead
+    # `lead` retired 2026-05 — team identity is the full contributor list
+    # (derived from person records via team + secondary_teams), not a single
+    # primary point of contact. Anyone with role: lead on their person record
+    # is still surfaced in the dossier + member list with that label.
     - members_count
     - geo
     - domain
