@@ -8120,6 +8120,15 @@ html, body {
 
 /* ── calendar · key dates + weekly rhythm sections ─────────────────── */
 .cal-section { margin: 28px 0; max-width: 84ch; }
+/* Presence is the wide Gantt canvas (often 1500px+). Don't trap it in the
+   readability-width cap that key-dates / rhythm use; let the canvas paint
+   at its natural width and give the surrounding scroll its own overflow. */
+.cal-section-presence { max-width: none; }
+.cal-section-presence .cal-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
 .cal-section-head {
   display: flex; align-items: baseline; gap: 14px;
   padding-bottom: 8px;
