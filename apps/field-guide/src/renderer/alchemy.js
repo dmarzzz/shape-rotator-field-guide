@@ -33,7 +33,11 @@ const ALCHEMY_LS_KEY  = "srwk:alchemy_mode";
 const PROFILE_LS_KEY  = "srwk:profile_v1";
 const EVENTS_LS_KEY   = "srwk:cohort_events_v1";
 const DETAIL_LS_KEY   = "srwk:alchemy_detail_v1";
-const ALCHEMY_MODES   = ["feed", "shapes", "pulse", "constellation", "calendar", "profile", "onboarding", "program", "asks", "atlas"];
+// `atlas` was here as an alchemy sub-mode but collides with the top-level
+// atlas tab (the swf-node wall-map). Renderer (renderAtlas / wireAtlas) is
+// kept in place so the view can be promoted to a top tab later under a
+// different name if desired — just unreachable from the alchemy rail today.
+const ALCHEMY_MODES   = ["feed", "shapes", "pulse", "constellation", "calendar", "profile", "onboarding", "program", "asks"];
 
 const WEEKS_TOTAL = 10;
 const WEEK_NOW = 1; // TODO: bump weekly, or derive from a cohort start date.
@@ -228,7 +232,7 @@ function render() {
     else if (state.mode === "onboarding") renderOnboarding();
     else if (state.mode === "program") renderProgram();
     else if (state.mode === "asks") renderAsks();
-    else if (state.mode === "atlas") renderAtlas();
+    // atlas — sub-mode disabled to avoid collision with top-level atlas tab.
     // Index cards for the staggered entrance.
     const cards = canvas.querySelectorAll(".alch-card, .alch-legend-card, .alch-feed-item");
     cards.forEach((c, i) => c.style.setProperty("--alch-i", String(i)));
@@ -245,7 +249,7 @@ function render() {
       if (state.mode === "onboarding") wireOnboarding();
       if (state.mode === "program") wireProgram();
       if (state.mode === "asks") wireAsks();
-      if (state.mode === "atlas") wireAtlas();
+      // atlas wire skipped — see ALCHEMY_MODES comment.
     }
     // Mount shape shaders LAST — every <canvas data-shape-fam> emitted
     // by the renderers above gets one WebGL2 context here. Controllers
@@ -907,6 +911,28 @@ function renderRhythmCard() {
 //   action.kind = "go-program"  — switch to the program sub-mode + a page.
 //   action.kind = "external"    — open a URL in the browser.
 
+// Per-step "I've already done this" overrides — stored locally so an existing
+// participant whose record predates the auto-detect heuristics can still
+// check off steps. Keyed by step `key` (stable across renames + reorders).
+const ONBOARDING_DONE_LS_KEY = "srfg:onboarding_done_v1";
+function loadOnboardingDone() {
+  try {
+    const raw = localStorage.getItem(ONBOARDING_DONE_LS_KEY);
+    if (!raw) return {};
+    const obj = JSON.parse(raw);
+    return (obj && typeof obj === "object") ? obj : {};
+  } catch { return {}; }
+}
+function saveOnboardingDone(map) {
+  try { localStorage.setItem(ONBOARDING_DONE_LS_KEY, JSON.stringify(map || {})); } catch {}
+}
+function toggleOnboardingDone(key) {
+  const cur = loadOnboardingDone();
+  if (cur[key]) delete cur[key];
+  else cur[key] = true;
+  saveOnboardingDone(cur);
+}
+
 function renderOnboarding() {
   const people  = state.cohort?.people || [];
   const teams   = state.cohort?.teams  || [];
@@ -922,79 +948,87 @@ function renderOnboarding() {
   ) || null;
   const myTeam = me ? teams.find(t => t.record_id === me.team) : null;
 
-  // Per-step state. "complete" means the underlying field exists in the
-  // surface; "missing" means the user should fill it in. We never mark
-  // "done" locally — the source of truth is always the merged markdown.
+  // Two sources of "complete":
+  //   1. Auto-detect: the underlying field exists in the cohort surface.
+  //   2. Local override: user explicitly checked it off (localStorage).
+  // The local override wins so participants whose records predate the
+  // heuristics aren't stuck staring at false-negatives.
   const has = (obj, key) => obj && obj[key] != null && String(obj[key]).trim() !== "";
+  const done = loadOnboardingDone();
 
-  const steps = [
+  // `key` is stable across renames + reorders; numbers (n) are display-only.
+  // Step 02 (confirm-your-project) was removed by request — the auto-detect
+  // for project assignment lives on the person record's `team` field, which
+  // step 03 (personal API) already pulls into the edit view.
+  const stepDefs = [
     {
-      n: "01",
+      key: "claim-person-record",
       title: "claim your person record",
       ask: me
         ? `you're already on the map as <strong>${escHtml(me.name || me.record_id)}</strong>.`
         : "no person record matches you yet. add one so you appear on the cohort map + calendar.",
-      state: me ? "complete" : "missing",
+      autoComplete: !!me,
+      missingState: "missing",
       action: me
         ? { kind: "go-profile", mode: "edit", recordKind: "person", recordId: me.record_id, label: "edit my record" }
         : { kind: "go-profile", mode: "add",  recordKind: "person",                          label: "add my record" },
     },
     {
-      n: "02",
-      title: "confirm your project",
-      ask: me && myTeam
-        ? `you're listed under <strong>${escHtml(myTeam.name || myTeam.record_id)}</strong>. open it to confirm the focus + lead are still right.`
-        : me
-          ? "your record doesn't point at a team yet. open profile → edit → person and pick one."
-          : "(complete step 01 first.)",
-      state: me && myTeam ? "complete" : (me ? "partial" : "blocked"),
-      action: (me && myTeam)
-        ? { kind: "go-profile", mode: "edit", recordKind: (myTeam.kind === "project" ? "project" : "team"), recordId: myTeam.record_id, label: "open my team" }
-        : me
-          ? { kind: "go-profile", mode: "edit", recordKind: "person", recordId: me.record_id, label: "set my team" }
-          : null,
-    },
-    {
-      n: "03",
+      key: "personal-api",
       title: "fill in your personal API",
       ask: me
         ? `tell the cohort how to collaborate with you well — comm style, what you'd happily pair on, your weekly rhythm. fields: <code>comm_style</code>, <code>contribute_interests</code>, <code>availability_pref</code>.`
         : "(complete step 01 first.)",
-      state: !me ? "blocked" : (has(me, "comm_style") || has(me, "contribute_interests") || has(me, "availability_pref") ? "complete" : "missing"),
+      autoComplete: !!me && (has(me, "comm_style") || has(me, "contribute_interests") || has(me, "availability_pref")),
+      missingState: !me ? "blocked" : "missing",
       action: me
         ? { kind: "go-profile", mode: "edit", recordKind: "person", recordId: me.record_id, label: "edit my personal API" }
         : null,
     },
     {
-      n: "04",
+      key: "week-1-intention",
       title: "set your week-1 intention",
       ask: me
         ? `one concrete thing you want to ship or learn this week. lives on your person record as <code>weekly_intention</code> — refresh it every monday.`
         : "(complete step 01 first.)",
-      state: !me ? "blocked" : (has(me, "weekly_intention") ? "complete" : "missing"),
+      autoComplete: !!me && has(me, "weekly_intention"),
+      missingState: !me ? "blocked" : "missing",
       action: me
         ? { kind: "go-profile", mode: "edit", recordKind: "person", recordId: me.record_id, label: "write my week-1 intention" }
         : null,
     },
     {
-      n: "05",
+      key: "project-success-criteria",
       title: "set your project's success criteria",
       ask: myTeam
         ? `each project defines its own. fields on <strong>${escHtml(myTeam.name || myTeam.record_id)}</strong>: <code>success_dimensions</code>, <code>weekly_goals</code>, <code>monthly_milestones</code>, <code>graduation_target</code>. this is the office-hours-week-1 conversation.`
-        : "(complete step 02 first.)",
-      state: !myTeam ? "blocked" : (has(myTeam, "weekly_goals") || has(myTeam, "graduation_target") ? "complete" : "missing"),
+        : "(your record needs a team first — handled by step 01.)",
+      autoComplete: !!myTeam && (has(myTeam, "weekly_goals") || has(myTeam, "graduation_target")),
+      missingState: !myTeam ? "blocked" : "missing",
       action: myTeam
         ? { kind: "go-profile", mode: "edit", recordKind: (myTeam.kind === "project" ? "project" : "team"), recordId: myTeam.record_id, label: "edit project goals" }
         : null,
     },
     {
-      n: "06",
+      key: "read-program-handbook",
       title: "read the program handbook",
       ask: "the rules, success vectors, and weekly rhythm are spelled out under <strong>program</strong>. read it once; reference it when something's ambiguous.",
-      state: "info",
+      autoComplete: false,
+      missingState: "info",
       action: { kind: "go-program", label: "open program handbook" },
     },
   ];
+
+  const steps = stepDefs.map((s, i) => {
+    const overridden = !!done[s.key];
+    const isComplete = overridden || s.autoComplete;
+    return {
+      ...s,
+      n: String(i + 1).padStart(2, "0"),
+      overridden,
+      state: isComplete ? "complete" : s.missingState,
+    };
+  });
 
   const stepHtml = steps.map(s => {
     const action = s.action
@@ -1003,13 +1037,28 @@ function renderOnboarding() {
            ${escHtml(s.action.label)}
          </button>`
       : "";
+    // Per-step "mark done" toggle. Reflects + writes the localStorage map.
+    // When auto-detect already says complete we still show the toggle so the
+    // user can manually uncheck (and re-pin the step's state if they want).
+    const toggleLabel = s.overridden
+      ? "✓ marked done"
+      : (s.autoComplete ? "auto · mark done" : "mark done");
+    const toggleCls = s.overridden ? "alch-onb-done alch-onb-done-on" : "alch-onb-done";
     return `
       <li class="alch-onb-step" data-state="${escAttr(s.state)}">
         <div class="alch-onb-step-num">${escHtml(s.n)}</div>
         <div class="alch-onb-step-body">
           <h3 class="alch-onb-step-title">${escHtml(s.title)}</h3>
           <p class="alch-onb-step-ask">${s.ask}</p>
-          ${action}
+          <div class="alch-onb-step-actions">
+            ${action}
+            <button class="${toggleCls}" type="button"
+                    data-onb-toggle="${escAttr(s.key)}"
+                    aria-pressed="${s.overridden}"
+                    title="stored in localStorage on this machine">
+              ${escHtml(toggleLabel)}
+            </button>
+          </div>
         </div>
         <div class="alch-onb-step-mark" aria-hidden="true"></div>
       </li>
@@ -1021,17 +1070,25 @@ function renderOnboarding() {
       <h2 class="alch-onb-title">onboarding</h2>
       <p class="alch-onb-sub">
         ${me
-          ? `you're <strong>${escHtml(me.name || me.record_id)}</strong>. six steps · take ~30 minutes total · everything below opens a github PR.`
-          : `six steps · take ~30 minutes total · everything below opens a github PR. start with step 01 so the rest can find you.`}
+          ? `you're <strong>${escHtml(me.name || me.record_id)}</strong>. five steps · take ~30 minutes total · everything below opens a github PR.`
+          : `five steps · take ~30 minutes total · everything below opens a github PR. start with step 01 so the rest can find you.`}
       </p>
     </header>
     <ol class="alch-onb-steps">${stepHtml}</ol>
-    <p class="alch-callout"><strong>onboarding · v0.1</strong><br/>
-    nothing on this page is stored locally — your progress lives in the merged markdown files. that means switching machines, re-installing the app, or someone else looking at <em>your</em> record always sees the same state. revisit weekly to refresh your intention + goals.</p>
+    <p class="alch-callout"><strong>onboarding · v0.2</strong><br/>
+    auto-detected completion reads from the merged cohort surface — so it stays correct across machines. the <strong>mark done</strong> toggle is a per-machine override stored in <code>localStorage</code>, useful when the auto-detect can't see a record you already have. revisit weekly to refresh your intention + goals.</p>
   `;
 }
 
 function wireOnboarding() {
+  for (const btn of state.canvas.querySelectorAll(".alch-onb-done[data-onb-toggle]")) {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.onbToggle;
+      if (!key) return;
+      toggleOnboardingDone(key);
+      render();
+    });
+  }
   for (const btn of state.canvas.querySelectorAll(".alch-onb-action")) {
     btn.addEventListener("click", () => {
       let a;

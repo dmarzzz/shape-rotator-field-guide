@@ -8320,6 +8320,28 @@ html, body {
 }
 .alch-onb-step[data-state="missing"] .alch-onb-step-mark { border-color: #c44025; }
 .alch-onb-action { margin-top: 0; }
+.alch-onb-step-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.alch-onb-done {
+  appearance: none;
+  background: transparent;
+  border: 1px solid rgba(245,243,238,0.18);
+  border-radius: 999px;
+  padding: 4px 11px;
+  font-family: var(--ed-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: lowercase;
+  color: var(--ed-ink-1);
+  opacity: 0.65;
+  cursor: pointer;
+}
+.alch-onb-done:hover { opacity: 1; border-color: rgba(245,243,238,0.40); }
+.alch-onb-done-on {
+  border-color: rgba(193,168,114,0.65);
+  background: rgba(193,168,114,0.12);
+  color: rgba(229,212,178,0.95);
+  opacity: 1;
+}
 
 /* ── program handbook ────────────────────────────────────────────── */
 .alch-prog-head { margin-bottom: 20px; max-width: 70ch; }
