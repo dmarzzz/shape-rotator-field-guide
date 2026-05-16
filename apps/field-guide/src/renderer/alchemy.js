@@ -78,6 +78,7 @@ const state = {
   atlasFocus: null,    // active tag in the atlas view (null = whole-graph mode)
   onboardingJustToggled: null,  // step key that was just marked/unmarked done; consumed by wireOnboarding to scroll-into-view the next step
   constellationMode: "clusters",  // "clusters" (shared cluster membership) | "dependencies" (team-asserted dependency edges)
+  calendarSub: "this-week",       // calendar sub-view: "this-week" | "schedule" | "availability"
   events: [],          // normalized feed items, latest-first
   fetchedAt: 0,
   isFetching: false,
@@ -705,12 +706,279 @@ function fmtShortDate(d) {
 // personColors and hsl stay here because the dossier exporter
 // (drawShapeGlyph) uses them too.
 
+// ─── calendar — sub-tabbed live view ─────────────────────────────────
+// Three sub-views, switchable via state.calendarSub:
+//   this-week    what's happening this ISO week + side rhythm card
+//   schedule     full chronological event list + add-event PR launcher
+//   availability the existing presence Gantt (everyone's window + absences)
+//
+// Events come from cohort-data/events/*.md (loaded into state.cohort.events
+// by the build script). Edits flow through the standard PR loop — same
+// shape as profile / asks / program-page edits.
 function renderCalendar() {
+  const sub = (state.calendarSub === "schedule" || state.calendarSub === "availability") ? state.calendarSub : "this-week";
+
+  state.canvas.innerHTML = `
+    <header class="cal-page-head">
+      <div class="cal-page-title">cohort calendar</div>
+      <div class="cal-page-sub">live · edits open a PR · cohort-data/events/</div>
+    </header>
+
+    <nav class="cal-subtabs" role="tablist" aria-label="calendar view">
+      <button class="cal-subtab" data-cal-sub="this-week"    aria-selected="${sub === "this-week"}"    type="button">
+        <span class="cs-num">①</span><span class="cs-label">this week</span>
+        <span class="cs-hint">events · rhythm</span>
+      </button>
+      <button class="cal-subtab" data-cal-sub="schedule"     aria-selected="${sub === "schedule"}"     type="button">
+        <span class="cs-num">②</span><span class="cs-label">full schedule</span>
+        <span class="cs-hint">every key date</span>
+      </button>
+      <button class="cal-subtab" data-cal-sub="availability" aria-selected="${sub === "availability"}" type="button">
+        <span class="cs-num">③</span><span class="cs-label">availability</span>
+        <span class="cs-hint">who's here, when</span>
+      </button>
+    </nav>
+
+    <div class="cal-subview" data-cal-active="${sub}">
+      ${sub === "this-week"    ? renderCalThisWeek()    : ""}
+      ${sub === "schedule"     ? renderCalSchedule()    : ""}
+      ${sub === "availability" ? renderCalAvailability() : ""}
+    </div>
+  `;
+
+  if (sub === "availability") mountAvailabilityCanvas();
+}
+
+// ── helpers ──────────────────────────────────────────────────────────
+
+function getAllEvents() {
+  const events = (state.cohort?.events || []).slice();
+  // Normalize: every event has a single sortable startMs / endMs.
+  const norm = events.map(e => {
+    const startIso = e.range_start || e.date;
+    const endIso   = e.range_end   || e.date;
+    return {
+      ...e,
+      _startIso: startIso,
+      _endIso:   endIso,
+      _startMs:  isoToDate(startIso)?.getTime() ?? 0,
+      _endMs:    isoToDate(endIso)?.getTime() ?? 0,
+      _isRange:  !!(e.range_start || e.range_end),
+    };
+  }).filter(e => e._startMs > 0);
+  // Sort by start asc.
+  norm.sort((a, b) => a._startMs - b._startMs);
+  return norm;
+}
+
+// Monday-of-this-week (UTC) for the "this week" filter. Treats Sunday
+// as part of the prior week (ISO convention) so the cohort week aligns
+// with the weekly_intention / weekly_goals refresh cadence (Monday).
+function isoWeekStartMs(now = new Date()) {
+  // Today at UTC-midnight.
+  const t = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  // getUTCDay: Sun=0, Mon=1, ..., Sat=6. Days back to Mon:
+  const dow = new Date(t).getUTCDay();
+  const back = dow === 0 ? 6 : dow - 1;
+  return t - back * 86400000;
+}
+
+function eventStateFor(e, nowMs = Date.now()) {
+  if (nowMs > e._endMs)        return "past";
+  if (nowMs >= e._startMs)     return "now";
+  return "future";
+}
+
+function fmtEventWhen(e) {
+  if (e._isRange) return `${fmtKeyDate(e._startIso)} → ${fmtKeyDate(e._endIso)}`;
+  return fmtKeyDate(e._startIso);
+}
+
+// Build the GitHub /new/ URL with a prefilled template for adding an event.
+// Filename slug is date-prefixed-title so the directory stays chronologically
+// sortable in the file browser (mirroring our existing files).
+function buildAddEventUrl() {
+  const today = new Date();
+  const iso = today.toISOString().slice(0, 10);
+  const branch = "main";
+  const slug = `${iso}-new-event`;
+  const template = `---
+record_id: ${slug}
+record_type: event
+schema_version: 1
+
+date: ${iso}
+kind: anchor
+title: ""
+subtitle: ""
+links: {}
+---
+
+## about
+
+(public surface — fill in this body if there's prose to attach)
+`;
+  const path = `cohort-data/events/${slug}.md`;
+  return `https://github.com/dmarzzz/shape-rotator-field-guide/new/${branch}` +
+    `?filename=${encodeURIComponent(path)}` +
+    `&value=${encodeURIComponent(template)}` +
+    `&quick_pull=1`;
+}
+function buildEditEventUrl(recordId) {
+  return `https://github.com/dmarzzz/shape-rotator-field-guide/edit/main/cohort-data/events/${encodeURIComponent(recordId)}.md?quick_pull=1`;
+}
+
+// ── card markup ──────────────────────────────────────────────────────
+
+function renderEventCard(e, opts = {}) {
+  const today = Date.now();
+  const st = eventStateFor(e, today);
+  const editUrl = buildEditEventUrl(e.record_id);
+  const linkBits = [];
+  const L = e.links || {};
+  if (L.website) linkBits.push(`<a class="cal-event-link" data-external href="${escAttr(L.website)}">website</a>`);
+  if (L.deck)    linkBits.push(`<a class="cal-event-link" data-external href="${escAttr(L.deck)}">deck</a>`);
+  if (L.signup)  linkBits.push(`<a class="cal-event-link" data-external href="${escAttr(L.signup)}">signup</a>`);
+  if (L.recap)   linkBits.push(`<a class="cal-event-link" data-external href="${escAttr(L.recap)}">recap</a>`);
+  return `
+    <article class="cal-event" data-kind="${escAttr(e.kind || "anchor")}" data-state="${st}">
+      <div class="cal-event-when">${escHtml(fmtEventWhen(e))}</div>
+      <div class="cal-event-body">
+        <div class="cal-event-title">${escHtml(e.title || "—")}</div>
+        ${e.subtitle ? `<div class="cal-event-sub">${escHtml(e.subtitle)}</div>` : ""}
+        ${linkBits.length ? `<div class="cal-event-links">${linkBits.join('<span class="acm-sep">·</span>')}</div>` : ""}
+      </div>
+      <div class="cal-event-actions">
+        <a class="cal-event-edit" data-cal-edit="${escAttr(editUrl)}" href="#" title="edit on github">✎</a>
+      </div>
+    </article>
+  `;
+}
+
+// ── this-week view ───────────────────────────────────────────────────
+
+function renderCalThisWeek() {
+  const all = getAllEvents();
+  const weekStart = isoWeekStartMs();
+  const weekEnd = weekStart + 7 * 86400000 - 1;
+  const todayMs = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
+
+  const thisWeek = all.filter(e => e._endMs >= weekStart && e._startMs <= weekEnd);
+  const today = thisWeek.filter(e => e._startMs <= todayMs && e._endMs >= todayMs);
+  const restOfWeek = thisWeek.filter(e => !today.includes(e));
+  // Up next: first 3 future events beyond this week.
+  const upNext = all.filter(e => e._startMs > weekEnd).slice(0, 3);
+
+  // ISO week label — "week of mon may 18"
+  const weekStartIso = new Date(weekStart).toISOString().slice(0, 10);
+  const weekLabel = fmtKeyDate(weekStartIso);
+
+  const todayHtml = today.length
+    ? `<section class="cal-tw-today">
+         <header class="cal-tw-h">
+           <span class="cal-tw-h-glyph">●</span>
+           <span class="cal-tw-h-label">today</span>
+         </header>
+         ${today.map(e => renderEventCard(e)).join("")}
+       </section>`
+    : `<section class="cal-tw-today cal-tw-today-empty">
+         <header class="cal-tw-h">
+           <span class="cal-tw-h-glyph">○</span>
+           <span class="cal-tw-h-label">today</span>
+         </header>
+         <p class="cal-tw-empty-msg">no scheduled events today — heads-down mode unless a team-level meeting is on your calendar.</p>
+       </section>`;
+
+  const weekHtml = restOfWeek.length
+    ? `<section class="cal-tw-week">
+         <header class="cal-tw-h">
+           <span class="cal-tw-h-label">rest of this week</span>
+           <span class="cal-tw-h-count">${restOfWeek.length}</span>
+         </header>
+         <div class="cal-tw-list">${restOfWeek.map(e => renderEventCard(e)).join("")}</div>
+       </section>`
+    : "";
+
+  const upNextHtml = upNext.length
+    ? `<section class="cal-tw-next">
+         <header class="cal-tw-h">
+           <span class="cal-tw-h-label">up next</span>
+           <span class="cal-tw-h-count">${upNext.length}</span>
+         </header>
+         <div class="cal-tw-list">${upNext.map(e => renderEventCard(e)).join("")}</div>
+         <p class="cal-tw-foot"><button class="alch-link-btn" data-cal-jump="schedule">→ see the full schedule</button></p>
+       </section>`
+    : "";
+
+  return `
+    <div class="cal-tw-wrap">
+      <div class="cal-tw-main">
+        <div class="cal-tw-weeklabel">${escHtml(weekLabel)} → +6 days</div>
+        ${todayHtml}
+        ${weekHtml}
+        ${upNextHtml}
+      </div>
+      <aside class="cal-tw-side">
+        ${renderRhythmCardInline()}
+        <div class="cal-tw-side-jump">
+          <button class="alch-feed-btn" data-cal-jump="availability" type="button">
+            <span aria-hidden="true">⌬</span><span>see everyone's availability</span>
+          </button>
+        </div>
+      </aside>
+    </div>
+  `;
+}
+
+// ── full-schedule view ───────────────────────────────────────────────
+
+function renderCalSchedule() {
+  const all = getAllEvents();
+  const today = Date.now();
+  const past   = all.filter(e => eventStateFor(e, today) === "past");
+  const now    = all.filter(e => eventStateFor(e, today) === "now");
+  const future = all.filter(e => eventStateFor(e, today) === "future");
+
+  const addUrl = buildAddEventUrl();
+  const sectionsFlat = [
+    now.length    ? { title: "happening now", count: now.length,    list: now }    : null,
+    future.length ? { title: "future",        count: future.length, list: future } : null,
+    past.length   ? { title: "past",          count: past.length,   list: past }   : null,
+  ].filter(Boolean);
+
+  const sectionsHtml = sectionsFlat.map(s => `
+    <section class="cal-sched-section">
+      <header class="cal-sched-h">
+        <span class="cal-sched-h-label">${escHtml(s.title)}</span>
+        <span class="cal-sched-h-count">${s.count}</span>
+      </header>
+      <div class="cal-sched-list">${s.list.map(e => renderEventCard(e)).join("")}</div>
+    </section>
+  `).join("");
+
+  return `
+    <div class="cal-sched-wrap">
+      <header class="cal-sched-pagehead">
+        <div>
+          <h3 class="cal-section-title">full schedule</h3>
+          <span class="cal-section-sub">${all.length} event${all.length === 1 ? "" : "s"} · click ✎ on any card to edit</span>
+        </div>
+        <button class="alch-feed-btn cal-sched-add" type="button" data-cal-add-url="${escAttr(addUrl)}">
+          <span aria-hidden="true">+</span><span>add an event</span>
+        </button>
+      </header>
+      ${sectionsHtml || `<p class="alch-callout">no events yet. click <strong>add an event</strong> to open a PR with a prefilled template.</p>`}
+    </div>
+  `;
+}
+
+// ── availability view (the existing presence Gantt) ──────────────────
+
+function renderCalAvailability() {
   const start = isoToDate(CAL_PROGRAM_START);
   const end   = isoToDate(CAL_PROGRAM_END);
   const numDays = daysBetween(start, end) + 1;
   const rows = buildCalendarRows(state.cohort || {});
-  // Compute total height: each team header + each person row.
   let bodyH = 0;
   for (const r of rows) bodyH += (r.type === "team" ? CAL_TEAM_H : CAL_ROW_H);
   const w = CAL_LEFT_W + numDays * CAL_DAY_W + CAL_PAD_R;
@@ -719,36 +987,41 @@ function renderCalendar() {
   const numPeople = rows.filter(r => r.type === "person").length;
   const numTeamGroups = rows.filter(r => r.type === "team").length;
 
-  state.canvas.innerHTML = `
-    <header class="cal-page-head">
-      <div class="cal-page-title">cohort calendar</div>
-      <div class="cal-page-sub">${escHtml(fmtShortDate(start))} → ${escHtml(fmtShortDate(end))} · ${numPeople} individuals · ${numTeamGroups} groups</div>
-      <div class="cal-page-actions">
-        <button id="cal-export-png" class="cal-action" type="button">export png</button>
-        <button id="cal-export-pdf" class="cal-action" type="button">export pdf</button>
-      </div>
-    </header>
-
-    ${renderKeyDatesStrip()}
-
-    ${renderRhythmCard()}
-
-    <section class="cal-section cal-section-presence">
-      <header class="cal-section-head">
-        <h3 class="cal-section-title">presence</h3>
-        <span class="cal-section-sub">who is here, when · striped = absence</span>
+  return `
+    <div class="cal-avail-wrap">
+      <header class="cal-avail-head">
+        <div>
+          <h3 class="cal-section-title">availability</h3>
+          <span class="cal-section-sub">${escHtml(fmtShortDate(start))} → ${escHtml(fmtShortDate(end))} · ${numPeople} individuals · ${numTeamGroups} groups · striped = absence</span>
+        </div>
+        <div class="cal-page-actions">
+          <button id="cal-export-png" class="cal-action" type="button">export png</button>
+          <button id="cal-export-pdf" class="cal-action" type="button">export pdf</button>
+          <button class="alch-feed-btn cal-avail-edit" type="button" data-cal-go-profile="1" title="edit your dates_start, dates_end, absences in your person record">
+            <span aria-hidden="true">✎</span><span>edit my availability</span>
+          </button>
+        </div>
       </header>
-      <div class="cal-scroll">
-        <canvas id="cal-canvas" width="${w}" height="${h}" style="width:${w}px; height:${h}px;"></canvas>
+      <div class="cal-section cal-section-presence">
+        <div class="cal-scroll">
+          <canvas id="cal-canvas" width="${w}" height="${h}" style="width:${w}px; height:${h}px;" data-cal-w="${w}" data-cal-h="${h}" data-cal-numdays="${numDays}"></canvas>
+        </div>
       </div>
-    </section>
-
-    <p class="alch-callout"><strong>cohort calendar · v0.2</strong><br/>
-    key dates + weekly rhythm at the top set the program's beat; the gantt below shows who's actually in the room each day (striped = absence). export captures the full presence canvas — renders inline in iMessage/Slack/Discord.</p>
+    </div>
   `;
+}
 
+// Mount step for the availability canvas. Called from renderCalendar after
+// innerHTML replacement so the canvas DOM node exists.
+function mountAvailabilityCanvas() {
   const cnv = document.getElementById("cal-canvas");
   if (!cnv) return;
+  const w = Number(cnv.dataset.calW) || cnv.width;
+  const h = Number(cnv.dataset.calH) || cnv.height;
+  const numDays = Number(cnv.dataset.calNumdays) || 1;
+  const start = isoToDate(CAL_PROGRAM_START);
+  const end   = isoToDate(CAL_PROGRAM_END);
+  const rows = buildCalendarRows(state.cohort || {});
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   cnv.width  = Math.round(w * dpr);
   cnv.height = Math.round(h * dpr);
@@ -789,11 +1062,46 @@ function hsl(h, s, l, a) {
   return `rgba(${r},${g},${b},${a == null ? 1 : a})`;
 }
 
+// Wire interactions for the active calendar sub-view. Mode-tab clicks,
+// add-event launcher, per-card edit links, jumps to other sub-views,
+// jumps to program / profile, and the gantt export buttons.
 function wireCalendar() {
-  const pngBtn = document.getElementById("cal-export-png");
-  if (pngBtn) pngBtn.addEventListener("click", () => exportCalendar("png"));
-  const pdfBtn = document.getElementById("cal-export-pdf");
-  if (pdfBtn) pdfBtn.addEventListener("click", () => exportCalendar("pdf"));
+  // Sub-tab switch
+  for (const btn of state.canvas.querySelectorAll(".cal-subtab[data-cal-sub]")) {
+    btn.addEventListener("click", () => {
+      const next = btn.dataset.calSub;
+      if (!next || next === state.calendarSub) return;
+      state.calendarSub = next;
+      render();
+    });
+  }
+  // Inline "jump to sub-view" links (this-week page → schedule / availability)
+  for (const a of state.canvas.querySelectorAll("[data-cal-jump]")) {
+    a.addEventListener("click", () => {
+      state.calendarSub = a.dataset.calJump;
+      render();
+    });
+  }
+  // Add-event launcher (schedule view)
+  const addBtn = state.canvas.querySelector(".cal-sched-add[data-cal-add-url]");
+  if (addBtn) addBtn.addEventListener("click", () => {
+    try { window.api?.openExternal?.(addBtn.dataset.calAddUrl); } catch {}
+  });
+  // Per-card edit launcher
+  for (const a of state.canvas.querySelectorAll(".cal-event-edit[data-cal-edit]")) {
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      try { window.api?.openExternal?.(a.dataset.calEdit); } catch {}
+    });
+  }
+  // Availability view's "edit my availability" → profile editor (person).
+  const editAvail = state.canvas.querySelector(".cal-avail-edit[data-cal-go-profile]");
+  if (editAvail) editAvail.addEventListener("click", () => {
+    state.mode = "profile";
+    try { localStorage.setItem(ALCHEMY_LS_KEY, "profile"); } catch {}
+    syncRailSelection();
+    render();
+  });
   // Inline jumps from the rhythm card → program handbook page.
   for (const a of state.canvas.querySelectorAll(".alch-link-btn[data-go='program']")) {
     a.addEventListener("click", () => {
@@ -804,30 +1112,26 @@ function wireCalendar() {
       render();
     });
   }
+  // Gantt export (availability view only)
+  const pngBtn = document.getElementById("cal-export-png");
+  if (pngBtn) pngBtn.addEventListener("click", () => exportCalendar("png"));
+  const pdfBtn = document.getElementById("cal-export-pdf");
+  if (pdfBtn) pdfBtn.addEventListener("click", () => exportCalendar("pdf"));
+  // External links inside event cards (website / deck / signup / recap).
+  wireExternalLinks(state.canvas);
 }
 
-// ─── program key dates ──────────────────────────────────────────────
-// Static for now — when the cohort wants to edit these, lift into
-// cohort-data/program/schedule.md frontmatter (or a dedicated dates file)
-// and let the build script pass them through.
-//
-// Each entry: { date | range, kind, title, sub }. `kind` drives the swatch:
-//   anchor   — program-wide marker (kickoff, graduation)
-//   external — outside-world conflict/opportunity (ETH NY week, IC3)
-//   demo     — scheduled showing day (midterm, graduation showcase)
-const PROGRAM_KEY_DATES = [
-  { date:  "2026-05-18", kind: "anchor",   title: "program kickoff",     sub: "rolling arrivals · soft onboarding week" },
-  { date:  "2026-05-25", kind: "anchor",   title: "first structured week", sub: "the cohort is fully assembled" },
-  { date:  "2026-06-11", kind: "demo",     title: "midterm · demo day",  sub: "ETH NY week · external-facing showing" },
-  { range: ["2026-06-08", "2026-06-14"], kind: "external", title: "ETH NY week",         sub: "ETH global · NY hackathon · adjacent traffic" },
-  { range: ["2026-06-15", "2026-06-21"], kind: "external", title: "IC3 hackathon",       sub: "andrew + others on the road" },
-  { date:  "2026-07-18", kind: "demo",     title: "graduation",          sub: "10 weeks · final showing + ceremony" },
-];
+// Format a YYYY-MM-DD as "wed jun 11" lowercase, UTC-safe.
+function fmtKeyDate(iso) {
+  const d = isoToDate(iso);
+  if (!d) return "";
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).toLowerCase();
+}
 
-// Weekly cadence the program runs on. Surfaced as a side card on the
-// calendar so participants can plan around it. Source-of-truth lives in
-// cohort-data/program/schedule.md — this is the "we render the bones
-// always, the prose lives in the program page."
+// The default-week rhythm. Source of truth for the prose form is
+// cohort-data/program/schedule.md; this block is the at-a-glance grid we
+// surface on the calendar's "this week" view. When the cohort wants to
+// shift the rhythm permanently, edit the program page + bump this block.
 const PROGRAM_WEEKLY_RHYTHM = [
   { slot: "morning",        weekdays: "every weekday",   note: "heads-down · no required programming until lunch" },
   { slot: "5–7pm",          weekdays: "mon · tue · thu", note: "cohort sessions (workshops · talks · whiteboarding)" },
@@ -837,48 +1141,7 @@ const PROGRAM_WEEKLY_RHYTHM = [
   { slot: "weekend",        weekdays: "sat + sun",       note: "off by default — anything programmatic is opt-in" },
 ];
 
-// Format a YYYY-MM-DD as "wed jun 11" lowercase, UTC-safe.
-function fmtKeyDate(iso) {
-  const d = isoToDate(iso);
-  if (!d) return "";
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).toLowerCase();
-}
-
-function renderKeyDatesStrip() {
-  const today = new Date();
-  const todayMs = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
-  const rows = PROGRAM_KEY_DATES.map(d => {
-    const isRange = Array.isArray(d.range);
-    const startIso = isRange ? d.range[0] : d.date;
-    const endIso   = isRange ? d.range[1] : d.date;
-    const startMs  = isoToDate(startIso)?.getTime() ?? 0;
-    const endMs    = isoToDate(endIso)?.getTime() ?? 0;
-    let state = "future";
-    if (todayMs > endMs)        state = "past";
-    else if (todayMs >= startMs) state = "now";
-    const when = isRange
-      ? `${fmtKeyDate(startIso)} → ${fmtKeyDate(endIso)}`
-      : fmtKeyDate(startIso);
-    return `
-      <li class="cal-keydate" data-kind="${escAttr(d.kind)}" data-state="${state}">
-        <span class="cal-keydate-when">${escHtml(when)}</span>
-        <span class="cal-keydate-title">${escHtml(d.title)}</span>
-        <span class="cal-keydate-sub">${escHtml(d.sub)}</span>
-      </li>
-    `;
-  }).join("");
-  return `
-    <section class="cal-section cal-section-keydates">
-      <header class="cal-section-head">
-        <h3 class="cal-section-title">key dates</h3>
-        <span class="cal-section-sub">the anchor points the cohort is steering toward</span>
-      </header>
-      <ul class="cal-keydates">${rows}</ul>
-    </section>
-  `;
-}
-
-function renderRhythmCard() {
+function renderRhythmCardInline() {
   const rows = PROGRAM_WEEKLY_RHYTHM.map(r => `
     <li class="cal-rhythm-row">
       <span class="cal-rhythm-slot">${escHtml(r.slot)}</span>
@@ -887,7 +1150,7 @@ function renderRhythmCard() {
     </li>
   `).join("");
   return `
-    <section class="cal-section cal-section-rhythm">
+    <section class="cal-section cal-section-rhythm cal-tw-rhythm">
       <header class="cal-section-head">
         <h3 class="cal-section-title">weekly rhythm</h3>
         <span class="cal-section-sub">the default week, when the program is in flight</span>

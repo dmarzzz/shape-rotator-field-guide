@@ -23,7 +23,7 @@ let _refreshTimer = null;
 const _subscribers = new Set();
 
 function emptyShape() {
-  return { teams: [], people: [], clusters: [], program: [], asks: [], cohort_vocab: {} };
+  return { teams: [], people: [], clusters: [], program: [], events: [], asks: [], cohort_vocab: {} };
 }
 
 function normalize(data) {
@@ -32,6 +32,7 @@ function normalize(data) {
     people:       Array.isArray(data?.people)   ? data.people   : [],
     clusters:     Array.isArray(data?.clusters) ? data.clusters : [],
     program:      Array.isArray(data?.program)  ? data.program  : [],
+    events:       Array.isArray(data?.events)   ? data.events   : [],
     asks:         Array.isArray(data?.asks)     ? data.asks     : [],
     cohort_vocab: (data?.cohort_vocab && typeof data.cohort_vocab === "object") ? data.cohort_vocab : {},
   };
@@ -65,7 +66,10 @@ function signatureOf(grouped) {
   // Asks churn fast (5-day expiry) — include status in the signature so the
   // wall re-renders on claim/close.
   const askSig = (arr) => arr.map(r => `${r.record_id}:${r.status || "open"}`).sort().join("|");
-  return `${grouped.teams.length}:${sig(grouped.teams)}#${grouped.people.length}:${sig(grouped.people)}#${grouped.clusters.length}:${sig(grouped.clusters)}#${grouped.program.length}:${progSig(grouped.program)}#${grouped.asks.length}:${askSig(grouped.asks)}`;
+  // Events are updated by date/title edits — include both in the signature
+  // so a date-shift on an existing record_id trips the refresh.
+  const eventSig = (arr) => arr.map(r => `${r.record_id}:${r.date || ""}:${r.range_start || ""}:${r.range_end || ""}:${r.title || ""}`).sort().join("|");
+  return `${grouped.teams.length}:${sig(grouped.teams)}#${grouped.people.length}:${sig(grouped.people)}#${grouped.clusters.length}:${sig(grouped.clusters)}#${grouped.program.length}:${progSig(grouped.program)}#${grouped.events.length}:${eventSig(grouped.events)}#${grouped.asks.length}:${askSig(grouped.asks)}`;
 }
 
 // Dev preview override. Setting `localStorage.setItem("srfg:cohort_source", "local")`

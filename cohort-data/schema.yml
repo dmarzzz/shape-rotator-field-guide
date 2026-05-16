@@ -101,6 +101,26 @@ program:
     - title
     - order
 
+# Program events — anchor dates the cohort is steering toward. Surface
+# powers the calendar tab's "this week", "full schedule", and event lookups.
+# Each event lives at cohort-data/events/<slug>.md so adds/edits go through
+# the standard PR loop — that's how the calendar stays "live."
+#
+# Date fields: either `date` (single day) OR `range_start` + `range_end`
+# (multi-day window). Use one or the other; the renderer picks the right
+# treatment.
+events:
+  surface_fields:
+    - record_id
+    - record_type
+    - date          # YYYY-MM-DD — single-day event
+    - range_start   # YYYY-MM-DD — start of multi-day window (use with range_end)
+    - range_end     # YYYY-MM-DD — end of multi-day window
+    - kind          # one of: anchor | demo | external | social | workshop
+    - title         # short headline
+    - subtitle      # one-line context (location, week tag, etc.)
+    - links         # nested: {website, deck, signup, recap}
+
 # Cohort-internal "asks" — verb-first pair-requests posted by participants.
 # Modeled on Recurse Center's pairing stream + ETHGlobal #find-a-team. Each
 # ask is a small markdown file under cohort-data/asks/ with frontmatter.
