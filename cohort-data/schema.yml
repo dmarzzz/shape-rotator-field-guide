@@ -30,6 +30,20 @@ people:
                      # Each entry is YYYY-MM-DD inclusive on both ends. The app can
                      # compute effective-present = window minus absences when it cares.
     - links
+    # "Personal API" — how to collaborate well with this person. All optional,
+    # all free-text. Surfaced on the person dossier + onboarding view.
+    - comm_style            # how you prefer to be reached (sync/async, DM/issue/PR, fastest path)
+    - contribute_interests  # what you'd happily pair on for other people's projects
+    - weekly_intention      # your concrete intention for this week (refreshed Monday)
+    - availability_pref     # your weekly rhythm — heads-down hours, no-meet days, etc.
+    # Cohort-graph fields — populated from CRM intake or self-asserted.
+    # See `program/rules.md` for the anti-patterns we deliberately don't build.
+    - now                   # one-line "what I'm working on right now" — Sivers/now-page pattern; refresh weekly
+    - skills                # list[string] — flat, no proficiency; mixable identity/domain tags. Folksonomy half of the schema.
+    - skill_areas           # list[controlled vocab] — see schema.cohort_vocab.skill_areas below. For filterable atlas + constellation.
+    - seeking               # list[string] — verb-first "I want help with X" chips. Directional, not status.
+    - offering              # list[string] — "I'd happily be DM'd about X" chips.
+    - pair_with             # list[string] — self-asserted "I've paired well with <slug>". Asymmetric, NOT a bidirectional endorsement.
 
 teams:
   surface_fields:
@@ -48,6 +62,20 @@ teams:
     - paper_basis       # the IC3 / Flashbots paper the team's work is grounded in
     - traction          # short public-traction blurb (no funding amounts / runway)
     - hackathon_note    # any hackathon achievement worth surfacing
+    # Program-track fields — set in week 1 office hours per the program agenda.
+    # All free-text (multiline ok). Edits flow through the same PR loop as
+    # everything else; stewards merge → next build:cohort propagates.
+    - success_dimensions  # which of {productization, research_lineage, collaborative} this project optimizes for
+    - monthly_milestones  # rough month-by-month checkpoints (one per line)
+    - weekly_goals        # the current week's concrete goal(s) — refreshed Monday
+    - graduation_target   # what "graduating well" looks like for this specific project
+    # Cohort-graph fields — populated from CRM intake or team-asserted.
+    - now                   # one-line "this week we're..." — Sivers/now-page pattern at team scope; refresh Monday
+    - prior_shipping        # list[string] — factual public outcomes (hackathon entries, papers, products). One per line.
+    - skill_areas           # list[controlled vocab] — see schema.cohort_vocab.skill_areas below. Aggregated across the team for filtering.
+    - dependencies          # list[string] — other team record_ids this project depends on, unblocks, or pairs naturally with. Seeds the connection graph.
+    - seeking               # list[string] — what the team wants help with from the cohort.
+    - offering              # list[string] — what the team would happily share/help others with.
 
 clusters:
   surface_fields:
@@ -57,3 +85,70 @@ clusters:
     - label
     - teams
     - description
+
+# Program-handbook pages. Unlike teams/people/clusters these aren't records of
+# entities — they're long-form markdown that the field-guide renders as tabs on
+# the "program" view. The build script includes the FULL body of each file
+# (frontmatter fields + the markdown after the frontmatter block) so the app
+# can render them offline-first from the bundled surface JSON.
+program:
+  surface_fields:
+    - record_id
+    - record_type
+    - title
+    - order
+
+# Cohort-internal "asks" — verb-first pair-requests posted by participants.
+# Modeled on Recurse Center's pairing stream + ETHGlobal #find-a-team. Each
+# ask is a small markdown file under cohort-data/asks/ with frontmatter.
+# Posts auto-fade 5 days after `posted_at` (renderer-side). Author is a
+# person record_id; tap-to-claim opens a DM via the person's existing
+# `links` fields (telegram/x/email).
+asks:
+  surface_fields:
+    - record_id
+    - record_type
+    - posted_at        # YYYY-MM-DD — when posted; renderer computes "expires_at = posted_at + 5d"
+    - author           # person record_id who posted it
+    - verb             # short emoji+verb glyph (e.g. "🤝 pair on", "🎨 need 30 min with", "🔬 brain on")
+    - topic            # one-line topic — "fuzzing the AMM contract", "Electron app distribution"
+    - skill_areas      # optional list[controlled vocab] — for filtering
+    - status           # open | claimed | done — defaults to "open"
+    - claimed_by       # optional person record_id
+
+# Controlled vocab. The folksonomy/skill_areas split:
+#   - `skills` (per-record, freeform): user-authored tags. Long-tail discovery.
+#   - `skill_areas` (per-record, controlled): pulled from this list. Filterable.
+# Keep this list short (~15-25 terms) and additions deliberate — every term
+# becomes a filter chip + a possible cluster anchor. New additions go through
+# the same PR review as record edits.
+cohort_vocab:
+  skill_areas:
+    # confidentiality / trust roots
+    - tee                    # trusted execution environments (Intel TDX, SGX, AMD SEV, etc.)
+    - dstack                 # Phala / dstack TEE deployment stack
+    - attestation            # remote attestation, RA-TLS, attestation chains
+    - formal-verification    # Kani, cvc5, bounded model checking, proof certificates
+    # cryptography
+    - zk                     # zero-knowledge proofs, Groth16, Schnorr, etc.
+    - post-quantum           # lattice cryptography (ML-KEM, CRYSTALS-Kyber)
+    - threshold-crypto       # threshold signatures, MPC committees
+    - mpc                    # multi-party computation
+    # agentic systems
+    - agentic                # LLM-as-primitive, agent orchestration
+    - agent-runtime          # durable agent execution, context engines, sandboxing
+    - agent-routing          # LLM routing, P2P inference, multi-provider
+    # crypto + chain
+    - mev                    # MEV, order flow, market microstructure
+    - cross-chain            # bridges, interop, asset routing
+    - identity               # credentials, pseudonyms, ASC, Sybil resistance
+    # data / runtime / infra
+    - p2p                    # peer-to-peer networking, DHT, mesh
+    - durable-workflows      # crash-safe orchestration, step-based execution
+    - confidential-db        # encrypted-at-rest + in-use database systems
+    # adjacent
+    - design                 # UI, UX, visual systems, brand
+    - bd-gtm                 # business development, go-to-market, distribution
+    - research-to-product    # productizing research IP, paper-to-prototype
+    - generative-media       # live visuals, audio-to-X, performance tech
+    - mechanism-design       # incentive design, market design, economic modeling

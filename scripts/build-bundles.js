@@ -83,6 +83,43 @@ function loadDir(dir, recordType, surfaceFields) {
   return records;
 }
 
+// Program-page loader. Unlike entity records, program pages carry their full
+// markdown body in the bundle so the app can render them offline-first. Body
+// is the raw markdown AFTER the frontmatter block — the renderer does the
+// light markdown→HTML pass.
+function loadProgramDir(dir, surfaceFields) {
+  if (!fs.existsSync(dir)) return [];
+  const files = fs.readdirSync(dir).filter(f => f.endsWith(".md"));
+  const records = [];
+  for (const f of files) {
+    const fp = path.join(dir, f);
+    const { frontmatter, body } = parseMarkdown(fp);
+    if (!frontmatter) {
+      console.warn(`[build-bundles] skipping ${fp} — no frontmatter`);
+      continue;
+    }
+    if (frontmatter.record_type !== "program_page") {
+      console.warn(`[build-bundles] skipping ${fp} — record_type mismatch (got ${frontmatter.record_type}, expected program_page)`);
+      continue;
+    }
+    if (!frontmatter.record_id) {
+      console.warn(`[build-bundles] skipping ${fp} — no record_id`);
+      continue;
+    }
+    const surface = pickSurface(frontmatter, surfaceFields);
+    surface.body_md = (body || "").trim();
+    records.push(surface);
+  }
+  // Stable order by frontmatter `order` (numeric, ascending), then record_id.
+  records.sort((a, b) => {
+    const ao = Number.isFinite(a.order) ? a.order : 1e9;
+    const bo = Number.isFinite(b.order) ? b.order : 1e9;
+    if (ao !== bo) return ao - bo;
+    return String(a.record_id).localeCompare(String(b.record_id));
+  });
+  return records;
+}
+
 function build() {
   const schema = readSchema();
   if (!schema || schema.schema_version !== 1) {
@@ -92,6 +129,13 @@ function build() {
   const teams    = loadDir(path.join(COHORT_DIR, "teams"),    "team",    schema.teams?.surface_fields    || []);
   const people   = loadDir(path.join(COHORT_DIR, "people"),   "person",  schema.people?.surface_fields   || []);
   const clusters = loadDir(path.join(COHORT_DIR, "clusters"), "cluster", schema.clusters?.surface_fields || []);
+  const program  = loadProgramDir(path.join(COHORT_DIR, "program"),      schema.program?.surface_fields  || []);
+  const asks     = loadDir(path.join(COHORT_DIR, "asks"),     "ask",     schema.asks?.surface_fields     || []);
+
+  // Cohort-wide controlled vocab + UI configuration the renderer needs at
+  // boot. Shipped alongside records so the atlas / constellation / asks UIs
+  // have a stable filter set even when offline.
+  const cohort_vocab = schema.cohort_vocab || {};
 
   const out = {
     schema_version: 1,
@@ -100,6 +144,9 @@ function build() {
     teams,
     people,
     clusters,
+    program,
+    asks,
+    cohort_vocab,
   };
   return out;
 }
@@ -138,7 +185,7 @@ function main() {
 
   fs.mkdirSync(path.dirname(OUT_PATH), { recursive: true });
   fs.writeFileSync(OUT_PATH, json);
-  console.log(`[build-bundles] wrote ${OUT_PATH} (${built.teams.length} teams, ${built.people.length} people, ${built.clusters.length} clusters)`);
+  console.log(`[build-bundles] wrote ${OUT_PATH} (${built.teams.length} teams, ${built.people.length} people, ${built.clusters.length} clusters, ${built.program.length} program pages, ${built.asks.length} asks)`);
 }
 
 main();
