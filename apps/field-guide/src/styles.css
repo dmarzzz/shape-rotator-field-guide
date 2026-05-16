@@ -9009,3 +9009,175 @@ html, body {
 @media (max-width: 760px) {
   .alch-atlas-stage[data-active="1"] { grid-template-columns: 1fr; }
 }
+
+/* ─────────────────────────────────────────────────────────────────────
+   DESIGN PASS — type scale + spacing for the new pages (program, asks,
+   onboarding, calendar). Aims:
+     · Modular type scale (1.250 / minor third) so heading sizes step
+       predictably from h4 to h1.
+     · Wider content columns (80-88ch) so a 1900px viewport doesn't
+       leave the content marooned in the middle.
+     · 8px baseline spacing system (multiples of 4/8/12/16/24/32/40).
+     · Body serif at 17px / line-height 1.65 for comfortable reading at
+       desktop scale (was 14.5px / 1.55).
+     · Placeholder italics get a distinct subdued treatment so they don't
+       compete with real content.
+   ───────────────────────────────────────────────────────────────────── */
+
+/* ── program ──────────────────────────────────────────────────────── */
+.alch-prog-head        { margin: 0 auto 32px; max-width: 88ch; padding-top: 12px; }
+.alch-prog-title       { font-size: 44px; letter-spacing: -0.02em; line-height: 1.0; margin: 0 0 14px 0; }
+.alch-prog-sub         { font-size: 13px; letter-spacing: 0.18em; line-height: 1.55; max-width: 64ch; margin: 0; opacity: 0.62; }
+
+.alch-prog-tabs        { margin: 24px auto 40px; max-width: 88ch; gap: 0; }
+.alch-prog-tab         { padding: 12px 24px 14px; gap: 12px; }
+.alch-prog-tab-num     { font-size: 11px; letter-spacing: 0.22em; }
+.alch-prog-tab-label   { font-size: 19px; }
+
+.alch-prog-page        { margin: 0 auto; max-width: 80ch; padding: 0 0 96px; }
+.alch-prog-page-head   { margin-bottom: 32px; align-items: baseline; gap: 24px; }
+.alch-prog-page-title  { font-size: 32px; line-height: 1.05; margin: 0; }
+
+.alch-prog-body        { font-size: 17px; line-height: 1.65; }
+.alch-prog-body p, .alch-prog-p { margin: 0 0 18px 0; }
+.alch-prog-h1          { font-size: 30px; line-height: 1.15; margin: 44px 0 12px; }
+.alch-prog-h2          { font-size: 24px; line-height: 1.20; margin: 36px 0 10px; opacity: 1; }
+.alch-prog-h3          { font-size: 20px; line-height: 1.25; margin: 30px 0 8px;  opacity: 1; }
+.alch-prog-h4          { font-size: 17px; line-height: 1.30; margin: 24px 0 6px;  opacity: 0.92; letter-spacing: 0.02em; }
+.alch-prog-ul, .alch-prog-ol { margin: 0 0 18px 24px; }
+.alch-prog-ul li, .alch-prog-ol li { margin: 6px 0; line-height: 1.55; }
+.alch-prog-body code   { font-size: 14px; padding: 2px 6px; }
+
+/* Placeholder italics — em-only paragraphs starting with "(placeholder"
+   get visibly subdued + a left rule so authors know "fill me in" without
+   them masquerading as real italicized prose. Pure CSS — no renderer
+   change needed since the markdown shape is consistent. */
+.alch-prog-body p:has(> em:only-child) {
+  font-style: normal;
+  font-family: var(--ed-mono, ui-monospace, monospace);
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  line-height: 1.55;
+  color: var(--ed-ink-1, #f5f3ee);
+  opacity: 0.42;
+  padding: 10px 14px;
+  border-left: 1px dashed rgba(245,243,238,0.16);
+  background: rgba(245,243,238,0.018);
+  margin: 0 0 18px 0;
+}
+.alch-prog-body p:has(> em:only-child) em { font-style: italic; }
+
+.alch-prog-page-foot   { margin-top: 40px; padding-top: 16px; font-size: 11px; }
+
+/* ── asks ─────────────────────────────────────────────────────────── */
+.alch-asks-head        { margin: 0 auto 32px; max-width: 88ch; padding-top: 12px; gap: 14px; }
+.alch-asks-title       { font-size: 44px; line-height: 1.0; letter-spacing: -0.02em; margin: 0 0 14px 0; }
+.alch-asks-sub         { font-size: 13px; letter-spacing: 0.18em; line-height: 1.55; max-width: 70ch; margin: 0; opacity: 0.62; }
+.alch-asks-head-actions { margin-top: 10px; }
+
+.alch-asks-section     { max-width: 88ch; margin: 28px auto; }
+.alch-asks-section-head { padding-bottom: 10px; margin-bottom: 14px; gap: 14px; }
+.alch-asks-section-title { font-size: 22px; line-height: 1.20; }
+.alch-asks-section-count { font-size: 11px; letter-spacing: 0.22em; }
+.alch-asks-section-note  { font-size: 11px; letter-spacing: 0.18em; }
+.alch-asks-list        { gap: 14px; }
+
+.alch-asks-card        {
+  grid-template-columns: 130px 1fr auto;
+  gap: 22px;
+  padding: 20px 22px;
+}
+.alch-asks-verb        { font-size: 19px; line-height: 1.25; padding-top: 2px; }
+.alch-asks-topic       { font-size: 16.5px; line-height: 1.5; margin-bottom: 10px; }
+.alch-asks-meta        { font-size: 11px; letter-spacing: 0.18em; gap: 10px; }
+.alch-asks-chips       { margin-top: 10px; gap: 8px; }
+.alch-asks-chip        { font-size: 11px; padding: 3px 10px; letter-spacing: 0.06em; }
+.alch-asks-action      { font-size: 12px; letter-spacing: 0.16em; }
+.alch-asks-status      { font-size: 10px; padding: 2px 9px; letter-spacing: 0.20em; }
+
+/* ── onboarding ───────────────────────────────────────────────────── */
+.alch-onb-head         { margin: 0 auto 32px; max-width: 88ch; padding-top: 12px; }
+.alch-onb-title        { font-size: 44px; line-height: 1.0; letter-spacing: -0.02em; margin: 0 0 14px 0; }
+.alch-onb-sub          { font-size: 13px; letter-spacing: 0.18em; line-height: 1.55; max-width: 70ch; opacity: 0.62; }
+
+.alch-onb-steps        { margin: 0 auto 36px; max-width: 88ch; gap: 18px; }
+.alch-onb-step         {
+  grid-template-columns: 56px 1fr 28px;
+  gap: 24px;
+  padding: 22px 24px;
+}
+.alch-onb-step-num     { font-size: 13px; letter-spacing: 0.22em; padding-top: 6px; }
+.alch-onb-step-title   { font-size: 22px; line-height: 1.20; margin: 0 0 10px 0; }
+.alch-onb-step-ask     { font-size: 16px; line-height: 1.6; margin: 0 0 16px 0; opacity: 0.88; }
+.alch-onb-step-ask code { font-size: 12.5px; padding: 2px 6px; }
+.alch-onb-step-mark    { width: 14px; height: 14px; }
+.alch-onb-step-actions { gap: 14px; }
+.alch-onb-done         { font-size: 11px; padding: 6px 14px; letter-spacing: 0.18em; }
+
+/* ── calendar ─────────────────────────────────────────────────────── */
+.cal-page-head         { margin-bottom: 32px; padding-top: 12px; max-width: 88ch; margin-left: auto; margin-right: auto; }
+.cal-page-title        { font-size: 44px; line-height: 1.0; letter-spacing: -0.02em; }
+.cal-page-sub          { font-size: 13px; letter-spacing: 0.18em; }
+
+.cal-subtabs           { margin: 12px auto 36px; max-width: 88ch; }
+.cal-subtab            { padding: 12px 22px 14px; gap: 14px; }
+.cs-num                { font-size: 11px; letter-spacing: 0.22em; }
+.cs-label              { font-size: 19px; }
+.cs-hint               { font-size: 11px; letter-spacing: 0.18em; }
+
+/* this-week — give it room: wider wrap, larger panels */
+.cal-tw-wrap           { max-width: 1280px; gap: 36px; grid-template-columns: minmax(0, 1fr) 360px; }
+.cal-tw-weeklabel      { font-size: 12px; letter-spacing: 0.22em; margin-bottom: 18px; }
+.cal-tw-h              { padding-bottom: 10px; margin-bottom: 14px; gap: 12px; }
+.cal-tw-h-glyph        { font-size: 14px; }
+.cal-tw-h-label        { font-size: 22px; line-height: 1.20; }
+.cal-tw-h-count        { font-size: 11px; letter-spacing: 0.22em; }
+.cal-tw-today, .cal-tw-week, .cal-tw-next { margin-bottom: 32px; }
+.cal-tw-empty-msg      { font-size: 15px; line-height: 1.6; margin: 8px 0 12px; }
+.cal-tw-list           { gap: 14px; }
+.cal-tw-foot           { margin-top: 18px; font-size: 12px; letter-spacing: 0.16em; }
+
+.cal-sched-wrap        { max-width: 88ch; }
+.cal-sched-pagehead    { margin-bottom: 28px; gap: 20px; }
+.cal-sched-section     { margin: 32px 0; }
+.cal-sched-h           { padding-bottom: 10px; margin-bottom: 14px; gap: 12px; }
+.cal-sched-h-label     { font-size: 20px; line-height: 1.20; }
+.cal-sched-h-count     { font-size: 11px; letter-spacing: 0.22em; }
+.cal-sched-list        { gap: 14px; }
+
+.cal-avail-head        { margin-bottom: 28px; max-width: 1280px; margin-left: auto; margin-right: auto; }
+
+/* event card */
+.cal-event             {
+  grid-template-columns: 220px 1fr 32px;
+  gap: 20px;
+  padding: 18px 22px;
+}
+.cal-event-when        { font-size: 12px; letter-spacing: 0.22em; padding-top: 4px; }
+.cal-event-title       { font-size: 19px; line-height: 1.25; margin-bottom: 6px; }
+.cal-event-sub         { font-size: 14.5px; line-height: 1.5; }
+.cal-event-links       { margin-top: 10px; font-size: 11px; letter-spacing: 0.18em; }
+.cal-event-edit        { font-size: 16px; width: 28px; height: 28px; }
+
+/* section heading — calendar-wide */
+.cal-section-title     { font-size: 22px; line-height: 1.20; }
+.cal-section-sub       { font-size: 12px; letter-spacing: 0.20em; }
+.cal-section-foot      { font-size: 12px; letter-spacing: 0.16em; margin-top: 18px; }
+
+/* rhythm card — used inside this-week side panel */
+.cal-section-rhythm header.cal-section-head { padding-bottom: 10px; margin-bottom: 14px; }
+.cal-rhythm-row        { padding: 10px 0; grid-template-columns: 130px 180px 1fr; gap: 18px; font-size: 13px; }
+.cal-rhythm-slot       { font-size: 15px; }
+.cal-rhythm-when       { font-size: 11px; letter-spacing: 0.22em; }
+.cal-rhythm-note       { font-size: 13px; line-height: 1.45; }
+
+/* ── callouts ─────────────────────────────────────────────────────── */
+.alch-callout          { margin: 32px auto 0; max-width: 88ch; font-size: 12px; line-height: 1.65; padding: 14px 16px; border-left: 1px dashed rgba(245,243,238,0.14); background: rgba(245,243,238,0.018); }
+.alch-callout strong   { font-size: 10.5px; letter-spacing: 0.20em; }
+
+/* ── responsive: collapse the two-column this-week layout earlier so
+   side-panel doesn't push main content too narrow ─────────────────── */
+@media (max-width: 1100px) {
+  .cal-tw-wrap { grid-template-columns: 1fr; }
+  .cal-tw-side { max-width: 88ch; }
+}
