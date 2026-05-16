@@ -58,30 +58,41 @@ export function onIdentityChanged(cb) {
   return () => _listeners.delete(cb);
 }
 
-// Resolve the identity to a *displayable* {label, kind} pair. For a person
-// claim, the label is the team they belong to (per the user's request:
-// "put your team name in the top-right"). For a team/project claim, the
-// label is the record itself. Falls back to the person's name if no team.
+// Resolve the identity to a *displayable* {label, avatar, kind} bundle.
+// Person claims surface their NAME (not team) per UI feedback, with an
+// avatar derived from the linked github handle when present. Team/project
+// claims still surface the record's name. Falls back to the persisted
+// display_name when cohort can't resolve.
 export async function resolveIdentityLabel() {
   const id = getIdentity();
   if (!id) return null;
   let cohort;
   try { cohort = await getCohortSurface(); } catch { cohort = null; }
   if (!cohort) {
-    return { label: id.display_name, kind: id.kind, record_id: id.record_id };
+    return { label: id.display_name, kind: id.kind, record_id: id.record_id, avatar: null };
   }
   if (id.kind === "person") {
     const person = (cohort.people || []).find(p => p.record_id === id.record_id);
-    if (person?.team) {
-      const team = (cohort.teams || []).find(t => t.record_id === person.team);
-      if (team) return { label: team.name, kind: "team", record_id: team.record_id, via_person: id.record_id };
-    }
-    // Person without a team — fall back to the person's name.
-    return { label: person?.name || id.display_name, kind: "person", record_id: id.record_id };
+    const gh = person?.links?.github || null;
+    const avatar = gh ? `https://github.com/${encodeURIComponent(gh)}.png?size=80` : null;
+    return {
+      label: person?.name || id.display_name,
+      kind: "person",
+      record_id: id.record_id,
+      avatar,
+      gh,
+    };
   }
   // team / project → look up the live record so renames flow through.
   const t = (cohort.teams || []).find(x => x.record_id === id.record_id);
-  return { label: t?.name || id.display_name, kind: id.kind, record_id: id.record_id };
+  const tgh = t?.links?.github || null;
+  return {
+    label: t?.name || id.display_name,
+    kind: id.kind,
+    record_id: id.record_id,
+    avatar: tgh ? `https://github.com/${encodeURIComponent(tgh)}.png?size=80` : null,
+    gh: tgh,
+  };
 }
 
 // ─── top-right pill ──────────────────────────────────────────────────
@@ -100,7 +111,7 @@ export function mountIdentityPill(tabBar) {
   pill.type = "button";
   pill.title = "your profile — click to edit";
   pill.innerHTML = `
-    <span class="ip-glyph" aria-hidden="true">◐</span>
+    <span class="ip-avatar" aria-hidden="true"><span class="ip-glyph">◐</span></span>
     <span class="ip-label">claim profile</span>
   `;
   pill.addEventListener("click", openIdentityFlow);
@@ -119,17 +130,49 @@ export function mountIdentityPill(tabBar) {
 async function paintIdentityPill() {
   if (!_pillEl) return;
   const id = getIdentity();
+  const avatarEl = _pillEl.querySelector(".ip-avatar");
+  const labelEl  = _pillEl.querySelector(".ip-label");
   if (!id) {
     _pillEl.dataset.state = "unclaimed";
-    _pillEl.querySelector(".ip-label").textContent = "claim profile";
+    labelEl.textContent = "claim profile";
     _pillEl.title = "tell shape rotator who you are";
+    // Reset avatar to the glyph fallback.
+    avatarEl.innerHTML = `<span class="ip-glyph">◐</span>`;
     return;
   }
   const resolved = await resolveIdentityLabel();
   _pillEl.dataset.state = "claimed";
   _pillEl.dataset.kind = resolved?.kind || id.kind;
-  _pillEl.querySelector(".ip-label").textContent = resolved?.label || id.display_name;
-  _pillEl.title = `you: ${id.kind} · ${id.record_id}\nclick to edit your record`;
+  labelEl.textContent = resolved?.label || id.display_name;
+  _pillEl.title = `you: ${id.kind} · ${id.record_id}${resolved?.gh ? ` · @${resolved.gh}` : ""}\nclick to edit your record`;
+  // Avatar: github profile image when we have a handle, else two-letter
+  // initial fallback derived from the display label (helps when a record
+  // has no github yet — most still get a meaningful glyph).
+  const fallbackInitials = labelInitials(resolved?.label || id.display_name);
+  if (resolved?.avatar) {
+    avatarEl.innerHTML = "";
+    const img = document.createElement("img");
+    img.className = "ip-avatar-img";
+    img.alt = "";
+    img.referrerPolicy = "no-referrer";
+    img.loading = "lazy";
+    img.src = resolved.avatar;
+    // Network failure / 404 → swap in the initials fallback in place.
+    img.addEventListener("error", () => {
+      avatarEl.innerHTML = `<span class="ip-initials">${escHtml(fallbackInitials)}</span>`;
+    }, { once: true });
+    avatarEl.appendChild(img);
+  } else {
+    avatarEl.innerHTML = `<span class="ip-initials">${escHtml(fallbackInitials)}</span>`;
+  }
+}
+
+function labelInitials(label) {
+  const s = String(label || "").trim();
+  if (!s) return "·";
+  // Take the first letter of each word, up to two; uppercased.
+  const parts = s.split(/\s+/).filter(Boolean).slice(0, 2);
+  return parts.map(p => p[0]).join("").toUpperCase() || s[0].toUpperCase();
 }
 
 // Click on the pill: claimed → jump to the editor on the user's record;
