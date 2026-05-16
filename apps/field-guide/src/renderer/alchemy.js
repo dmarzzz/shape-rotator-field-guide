@@ -1279,8 +1279,21 @@ function renderOnboarding() {
           : "(complete step 01 first.)",
       autoComplete: !!me && has(me, "weekly_intention"),
       missingState: !step1Effective ? "blocked" : "missing",
+      // Inline single-field form. Renders a textarea + submit when we have
+      // an auto-detected `me`. Submit builds a one-line YAML patch and
+      // opens github's web editor on the user's person record (web editor
+      // doesn't accept pre-filled content for existing files; the patch
+      // is shown + made copy-paste-ready alongside).
+      inline: me ? {
+        recordKind: "person",
+        recordId: me.record_id,
+        fieldKey: "weekly_intention",
+        existing: String(me.weekly_intention || ""),
+        placeholder: "ship the prototype to 3 cohort members",
+        submitLabel: "submit → open PR",
+      } : null,
       action: me
-        ? { kind: "go-profile", mode: "edit", recordKind: "person", recordId: me.record_id, label: "write my week-1 intention" }
+        ? null  // inline form replaces the route-to-profile button when auto-detected
         : (step1Effective ? openPersonEditorGeneric : null),
     },
     {
@@ -1319,6 +1332,25 @@ function renderOnboarding() {
   });
 
   const stepHtml = steps.map(s => {
+    // Inline single-field form (currently used by week-1 intention only;
+    // pattern extends to any one-field person/team update).
+    const inlineHtml = (s.inline && s.state !== "complete" && s.state !== "blocked")
+      ? `<form class="alch-onb-inline" data-onb-inline-step="${escAttr(s.key)}"
+                data-record-kind="${escAttr(s.inline.recordKind)}"
+                data-record-id="${escAttr(s.inline.recordId)}"
+                data-field-key="${escAttr(s.inline.fieldKey)}">
+           <textarea class="alch-onb-inline-input"
+                     rows="2"
+                     placeholder="${escAttr(s.inline.placeholder || "")}">${escHtml(s.inline.existing || "")}</textarea>
+           <div class="alch-onb-inline-row">
+             <button class="alch-feed-btn alch-onb-inline-submit" type="submit">
+               ${escHtml(s.inline.submitLabel || "submit → open PR")}
+             </button>
+             <span class="alch-onb-inline-hint">opens github's web editor with the YAML patch ready to paste</span>
+           </div>
+           <div class="alch-onb-inline-result" hidden></div>
+         </form>`
+      : "";
     const action = s.action
       ? `<button class="alch-feed-btn alch-onb-action" type="button"
                  data-onb-action="${escAttr(JSON.stringify(s.action))}">
@@ -1338,6 +1370,7 @@ function renderOnboarding() {
         <div class="alch-onb-step-body">
           <h3 class="alch-onb-step-title">${escHtml(s.title)}</h3>
           <p class="alch-onb-step-ask">${s.ask}</p>
+          ${inlineHtml}
           <div class="alch-onb-step-actions">
             ${action}
             <button class="${toggleCls}" type="button"
@@ -1368,6 +1401,59 @@ function renderOnboarding() {
   `;
 }
 
+// Submit a single-field update from an onboarding inline form. Build the
+// YAML patch, open github's web editor on the target record, and show the
+// patch alongside (web editor doesn't accept pre-filled content for existing
+// files — user pastes the patch under their frontmatter, saves, and PRs).
+function submitOnboardingInline(form) {
+  const recordKind = form.dataset.recordKind || "person";
+  const recordId   = form.dataset.recordId;
+  const fieldKey   = form.dataset.fieldKey;
+  const stepKey    = form.dataset.onbInlineStep;
+  const input      = form.querySelector(".alch-onb-inline-input");
+  const result     = form.querySelector(".alch-onb-inline-result");
+  if (!recordId || !fieldKey || !input || !result) return;
+
+  const value = input.value.trim();
+  if (!value) {
+    result.hidden = false;
+    result.innerHTML = `<p class="alch-onb-inline-line alch-onb-inline-err">type something first.</p>`;
+    return;
+  }
+  const folder = recordKind === "person" ? "people"
+               : recordKind === "team" || recordKind === "project" ? "teams"
+               : `${recordKind}s`;
+  const filename = `cohort-data/${folder}/${recordId}.md`;
+  const editUrl = `https://github.com/dmarzzz/shape-rotator-field-guide/edit/main/${filename}?quick_pull=1`;
+  const patch = `${fieldKey}: ${yamlScalar(value, 2)}`;
+
+  try { window.api?.openExternal?.(editUrl); } catch {}
+  result.hidden = false;
+  result.innerHTML = `
+    <p class="alch-onb-inline-line">
+      <span class="alch-onb-inline-tag">github opened</span>
+      paste this patch under your record's frontmatter, commit, and open the PR.
+    </p>
+    <pre class="alch-onb-inline-patch">${escHtml(patch)}</pre>
+    <div class="alch-onb-inline-row">
+      <button class="alch-onb-inline-copy" type="button">copy patch</button>
+      <a class="alch-onb-inline-link" href="${escAttr(editUrl)}" data-external>reopen editor</a>
+    </div>
+  `;
+  const copyBtn = result.querySelector(".alch-onb-inline-copy");
+  if (copyBtn) {
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(patch);
+        const prev = copyBtn.textContent;
+        copyBtn.textContent = "copied";
+        setTimeout(() => { copyBtn.textContent = prev; }, 1400);
+      } catch {}
+    });
+  }
+  wireExternalLinks(result);
+}
+
 function wireOnboarding() {
   for (const btn of state.canvas.querySelectorAll(".alch-onb-done[data-onb-toggle]")) {
     btn.addEventListener("click", () => {
@@ -1378,6 +1464,13 @@ function wireOnboarding() {
       // can scroll to (and momentarily pulse) whatever comes next.
       state.onboardingJustToggled = key;
       render();
+    });
+  }
+  // Inline single-field submit (week-1 intention today; pattern extends).
+  for (const form of state.canvas.querySelectorAll("form.alch-onb-inline")) {
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      submitOnboardingInline(form);
     });
   }
   // After re-render, surface forward motion: scroll the first step that
@@ -1690,60 +1783,156 @@ function renderAsks() {
     </section>
   `;
 
-  // New-ask handoff: same /new/ URL pattern as profile records. We
-  // pre-fill enough that the user only has to fill `topic` + verb.
+  // Author slug: prefer the cohort-resolved person record_id (so the
+  // ask's `author` field actually points at a record), fall back to
+  // their github handle, then a literal "your-slug" the user edits in
+  // the github web editor. (Old code injected a stale branch name here;
+  // both /new/ and /edit/ now target `main`.)
   const todayIso = new Date().toISOString().slice(0, 10);
   const authorSlug = myAuthorId || (myHandle ? myHandle : "your-slug");
-  const askTemplate = `---
-record_id: ${authorSlug}-${todayIso}
-record_type: ask
-posted_at: ${todayIso}
-author: ${authorSlug}
-verb: "🤝 pair on"
-topic: ""
-skill_areas: []
-status: open
----
 
-(optional body — extra context for the ask.)
-`;
-  const newUrl = `https://github.com/dmarzzz/shape-rotator-field-guide/new/cohort-enrichment-mega-pr` +
-    `?filename=${encodeURIComponent(`cohort-data/asks/${authorSlug}-${todayIso}.md`)}` +
-    `&value=${encodeURIComponent(askTemplate)}` +
-    `&quick_pull=1`;
+  // Common verbs the compose form offers as quick picks. Stays in code
+  // (not cohort-data) since it's a tiny vocab that drives nothing else.
+  const ASK_VERB_OPTIONS = [
+    "🤝 pair on",
+    "🎨 need 30 min with",
+    "🔬 brain on",
+    "🧪 try this with me",
+    "📣 looking for",
+    "🪛 help me debug",
+  ];
 
   state.canvas.innerHTML = `
     <header class="alch-asks-head">
       <h2 class="alch-asks-title">asks</h2>
       <p class="alch-asks-sub">verb-first pair-requests · 5-day expiry · tap-to-claim opens the author's DM</p>
-      <div class="alch-asks-head-actions">
-        <button class="alch-feed-btn alch-asks-new" type="button" data-asks-new-url="${escAttr(newUrl)}">
-          <span aria-hidden="true">+</span><span>post an ask</span>
-        </button>
-      </div>
     </header>
+
+    <form class="alch-asks-compose" data-author-slug="${escAttr(authorSlug)}" data-today="${escAttr(todayIso)}">
+      <header class="alch-asks-compose-head">
+        <span class="alch-asks-compose-title">post an ask</span>
+        <span class="alch-asks-compose-sub">submit opens a github PR to add this file under <code>cohort-data/asks/</code></span>
+      </header>
+      <div class="alch-asks-compose-grid">
+        <label class="alch-asks-compose-field alch-asks-compose-verb">
+          <span class="alch-asks-compose-label">verb</span>
+          <select name="verb" class="alch-asks-compose-input">
+            ${ASK_VERB_OPTIONS.map(v => `<option value="${escAttr(v)}">${escHtml(v)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="alch-asks-compose-field alch-asks-compose-topic">
+          <span class="alch-asks-compose-label">topic</span>
+          <textarea name="topic" rows="2" class="alch-asks-compose-input"
+                    placeholder="fuzzing the AMM contract — would love 30 min with someone who's done property testing"></textarea>
+        </label>
+        <label class="alch-asks-compose-field alch-asks-compose-tags">
+          <span class="alch-asks-compose-label">tags <span class="alch-asks-compose-hint">(comma-separated, from cohort vocab if you can)</span></span>
+          <input name="skill_areas" type="text" class="alch-asks-compose-input" placeholder="tee, dstack, attestation" />
+        </label>
+      </div>
+      <div class="alch-asks-compose-row">
+        <button class="alch-feed-btn alch-asks-compose-submit" type="submit">submit → open PR</button>
+        <span class="alch-asks-compose-author">posting as <strong>${escHtml(authorSlug)}</strong>${myHandle && authorSlug !== myHandle ? ` · @${escHtml(myHandle)}` : ""}</span>
+      </div>
+      <div class="alch-asks-compose-result" hidden></div>
+    </form>
 
     ${section("open", open)}
     ${section("claimed", claimed, "in flight")}
     ${section("done", done, "wrap-up only")}
     ${section("fading", expired, "past the 5-day window")}
 
-    <p class="alch-callout"><strong>asks · v0.1</strong><br/>
+    <p class="alch-callout"><strong>asks · v0.2</strong><br/>
     posts are markdown under <code>cohort-data/asks/</code>. expiry is renderer-side — files stay so the audit trail is preserved. no claim count, no leaderboard, no algorithm. filter + browse + DM. see <button class="alch-link-btn" data-go="program" data-program-page="rules">program · rules</button> for the anti-patterns we left out.</p>
   `;
 }
 
+// Compose-form submit. Reads verb/topic/skill_areas, derives a stable
+// slug for the file (author + date + 4-char topic hash to dedupe same-day
+// asks from the same author), builds the full ask markdown, and opens
+// github's /new/ URL with that content prefilled.
+function submitAskCompose(form) {
+  const authorSlug = form.dataset.authorSlug || "your-slug";
+  const todayIso   = form.dataset.today || new Date().toISOString().slice(0, 10);
+  const verb       = String(form.elements.verb?.value || "🤝 pair on").trim();
+  const topic      = String(form.elements.topic?.value || "").trim();
+  const tagsRaw    = String(form.elements.skill_areas?.value || "").trim();
+  const result     = form.querySelector(".alch-asks-compose-result");
+  if (!result) return;
+
+  if (!topic) {
+    result.hidden = false;
+    result.innerHTML = `<p class="alch-onb-inline-line alch-onb-inline-err">type a topic first.</p>`;
+    return;
+  }
+  const skillAreas = tagsRaw.length
+    ? tagsRaw.split(",").map(s => s.trim().toLowerCase()).filter(Boolean)
+    : [];
+
+  // 4-char hash of the topic so two asks the same day from the same author
+  // don't collide on filename. Deterministic so re-submits land on the
+  // same path (lets the user edit instead of duplicating if they reopen).
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < topic.length; i++) { h ^= topic.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  const hash = h.toString(36).slice(0, 4);
+  const recordId = `${authorSlug}-${todayIso}-${hash}`;
+
+  // Build the markdown body. quoteYaml + yamlScalar handle quoting + multiline.
+  const tagsBlock = skillAreas.length
+    ? "skill_areas:\n" + skillAreas.map(s => `  - ${s}`).join("\n")
+    : "skill_areas: []";
+  const askMarkdown = `---
+record_id: ${recordId}
+record_type: ask
+schema_version: 1
+posted_at: ${todayIso}
+author: ${authorSlug}
+verb: ${quoteYaml(verb)}
+topic: ${yamlScalar(topic, 2)}
+${tagsBlock}
+status: open
+---
+
+(optional body — extra context for the ask.)
+`;
+  const filename = `cohort-data/asks/${recordId}.md`;
+  const newUrl = `https://github.com/dmarzzz/shape-rotator-field-guide/new/main` +
+    `?filename=${encodeURIComponent(filename)}` +
+    `&value=${encodeURIComponent(askMarkdown)}` +
+    `&quick_pull=1`;
+
+  try { window.api?.openExternal?.(newUrl); } catch {}
+  result.hidden = false;
+  result.innerHTML = `
+    <p class="alch-onb-inline-line">
+      <span class="alch-onb-inline-tag">github opened</span>
+      review the prefilled markdown, then <strong>commit new file</strong> → github walks you into a PR.
+    </p>
+    <details class="alch-asks-compose-preview">
+      <summary>preview the file</summary>
+      <pre class="alch-onb-inline-patch">${escHtml(askMarkdown)}</pre>
+    </details>
+    <div class="alch-onb-inline-row">
+      <a class="alch-onb-inline-link" href="${escAttr(newUrl)}" data-external>reopen editor</a>
+    </div>
+  `;
+  wireExternalLinks(result);
+}
+
 function wireAsks() {
-  for (const btn of state.canvas.querySelectorAll(".alch-asks-new[data-asks-new-url]")) {
-    btn.addEventListener("click", () => {
-      try { window.api?.openExternal?.(btn.dataset.asksNewUrl); } catch {}
+  // Compose form: build the full markdown content from the form values
+  // and open github's /new/ URL with that content prefilled.
+  for (const form of state.canvas.querySelectorAll("form.alch-asks-compose")) {
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      submitAskCompose(form);
     });
   }
   for (const a of state.canvas.querySelectorAll(".alch-asks-action[data-asks-edit]")) {
     a.addEventListener("click", (e) => {
       e.preventDefault();
       const slug = a.dataset.asksEdit;
-      const url = `https://github.com/dmarzzz/shape-rotator-field-guide/edit/cohort-enrichment-mega-pr/cohort-data/asks/${encodeURIComponent(slug)}.md?quick_pull=1`;
+      const url = `https://github.com/dmarzzz/shape-rotator-field-guide/edit/main/cohort-data/asks/${encodeURIComponent(slug)}.md?quick_pull=1`;
       try { window.api?.openExternal?.(url); } catch {}
     });
   }
@@ -2857,37 +3046,90 @@ async function refreshFeed({ source = "auto", force = false } = {}) {
     paintFeedMeta();
     return;
   }
-  // Single source: every team's canonical `links.repo` from the
-  // cohort.surface bundle. Dedupe by repo string in case two teams
-  // ever share a monorepo.
-  const seen = new Set();
-  const repos = [];
+  // Two source kinds:
+  //   1. Team repos — every team's canonical `links.repo`. Captures
+  //      shared activity (PRs, pushes, releases) under the team's name.
+  //   2. Person github handles — `/users/<handle>/events/public`.
+  //      Catches "big changes to PRs in individuals' repos" the user
+  //      asked for. When a person's event lands on a non-cohort repo
+  //      we still surface it with their handle in the actor slot.
+  // Both deduped (repos by string, handles by lowercase).
+  const teamRepos = [];
+  const seenRepos = new Set();
   for (const t of state.cohort?.teams || []) {
     const repo = String(t?.links?.repo || "").trim();
-    if (!GH_REPO_RE.test(repo) || seen.has(repo)) continue;
-    seen.add(repo);
-    repos.push({ team_id: t.record_id, repo });
+    if (!GH_REPO_RE.test(repo) || seenRepos.has(repo)) continue;
+    seenRepos.add(repo);
+    teamRepos.push({ team_id: t.record_id, repo });
   }
-  if (repos.length === 0) { paintFeedMeta(); return; }
+  const userHandles = [];
+  const seenHandles = new Set();
+  for (const p of state.cohort?.people || []) {
+    const gh = String(p?.links?.github || "").trim();
+    if (!gh) continue;
+    const lower = gh.toLowerCase();
+    if (seenHandles.has(lower)) continue;
+    seenHandles.add(lower);
+    userHandles.push({ person_id: p.record_id, gh });
+  }
+  const totalTargets = teamRepos.length + userHandles.length;
+  if (totalTargets === 0) { paintFeedMeta(); return; }
+
   state.isFetching = true;
-  paintFeedMeta(`fetching · ${repos.length} repos · ${source}`);
+  state.fetchProgress = { done: 0, total: totalTargets };
+  // First-visit loading screen: shows progress as repos+users get hit.
+  if (state.mode === "feed" && state.events.length === 0) {
+    renderFeed();
+    wireFeedInteractions();
+  } else {
+    paintFeedMeta(`fetching · ${totalTargets} sources · ${source}`);
+  }
+
   const collected = [];
-  for (const { team_id, repo } of repos) {
+  const repoToTeam = new Map(teamRepos.map(({ repo, team_id }) => [repo.toLowerCase(), team_id]));
+
+  const tick = () => {
+    state.fetchProgress.done++;
+    if (state.mode === "feed" && state.events.length === 0) {
+      paintFeedLoadingProgress();
+    } else {
+      paintFeedMeta(`fetching · ${state.fetchProgress.done}/${totalTargets} · ${source}`);
+    }
+  };
+
+  // Team repos first (most relevant signal).
+  for (const { team_id, repo } of teamRepos) {
     try {
       const items = await fetchGithubRepoEvents(repo, team_id);
       collected.push(...items);
     } catch (e) {
       console.warn(`[alch.feed] github fetch ${repo}:`, e?.message || e);
     }
+    tick();
   }
+  // Then person events. Match the event's repo against cohort teams when
+  // possible so the feed item still gets a team label; otherwise leave
+  // team_id null and the renderer surfaces the actor + bare repo string.
+  for (const { person_id, gh } of userHandles) {
+    try {
+      const items = await fetchGithubUserEvents(gh, repoToTeam, person_id);
+      collected.push(...items);
+    } catch (e) {
+      console.warn(`[alch.feed] github user fetch ${gh}:`, e?.message || e);
+    }
+    tick();
+  }
+
   // Merge with existing cache, dedupe by id, sort latest-first, cap.
+  // Bumped cap 200 → 400 since two sources can overlap heavily.
   const byId = new Map();
   for (const it of [...collected, ...state.events]) {
     if (!byId.has(it.id)) byId.set(it.id, it);
   }
-  state.events = Array.from(byId.values()).sort((a, b) => (b.at_ms || 0) - (a.at_ms || 0)).slice(0, 200);
+  state.events = Array.from(byId.values()).sort((a, b) => (b.at_ms || 0) - (a.at_ms || 0)).slice(0, 400);
   state.fetchedAt = Date.now();
   state.isFetching = false;
+  state.fetchProgress = null;
   saveEventsCache();
   if (state.mode === "feed") {
     renderFeed();
@@ -2896,7 +3138,10 @@ async function refreshFeed({ source = "auto", force = false } = {}) {
 }
 
 async function fetchGithubRepoEvents(repo, team_id) {
-  const url = `https://api.github.com/repos/${repo}/events?per_page=20`;
+  // per_page maxes at 100 for the events endpoint; the API only retains
+  // ~300 events / 90 days per repo regardless, so this gives the best
+  // back-fill we can get without authentication.
+  const url = `https://api.github.com/repos/${repo}/events?per_page=100`;
   const r = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
   if (!r.ok) {
     if (r.status === 404 || r.status === 403) return [];
@@ -2905,6 +3150,45 @@ async function fetchGithubRepoEvents(repo, team_id) {
   const evs = await r.json();
   if (!Array.isArray(evs)) return [];
   return evs.map(ev => normalizeGithubEvent(ev, repo, team_id)).filter(Boolean);
+}
+
+// Per-person scraper. Uses /users/<handle>/events/public — the public
+// timeline of everything that user does across github. We map each
+// event's repo back to a cohort team when possible (so feed cards still
+// show "Pramaana · person did X" rather than just "raw owner/repo").
+// person_id flows through as a fallback team label.
+async function fetchGithubUserEvents(handle, repoToTeam, person_id) {
+  const url = `https://api.github.com/users/${encodeURIComponent(handle)}/events/public?per_page=100`;
+  const r = await fetch(url, { headers: { Accept: "application/vnd.github+json" } });
+  if (!r.ok) {
+    if (r.status === 404 || r.status === 403) return [];
+    throw new Error(`HTTP ${r.status}`);
+  }
+  const evs = await r.json();
+  if (!Array.isArray(evs)) return [];
+  const out = [];
+  for (const ev of evs) {
+    const repo = ev.repo?.name || "";
+    if (!repo) continue;
+    const team_id = repoToTeam.get(repo.toLowerCase()) || null;
+    const norm = normalizeGithubEvent(ev, repo, team_id);
+    if (norm) {
+      norm.person_id = person_id;  // tag for "this came from a cohort person"
+      out.push(norm);
+    }
+  }
+  return out;
+}
+
+// Update the loading-screen progress text + bar without a full re-render
+// (avoids the alchemy-canvas swap animation flickering 30+ times).
+function paintFeedLoadingProgress() {
+  const p = state.fetchProgress;
+  if (!p) return;
+  const progEl = document.getElementById("alch-feed-loading-progress");
+  if (progEl) progEl.textContent = `${p.done} of ${p.total} sources fetched`;
+  const barEl = document.getElementById("alch-feed-loading-bar-fill");
+  if (barEl) barEl.style.width = `${(100 * p.done / Math.max(p.total, 1)).toFixed(1)}%`;
 }
 
 function normalizeGithubEvent(ev, repo, team_id) {
@@ -3039,6 +3323,28 @@ function renderFeed() {
         <div class="alch-feed-empty-sub">
           go to <button class="alch-link-btn" data-go="profile">profile</button> to register
           your team's github repos. activity will populate here within a few seconds.
+        </div>
+      </div>
+    `;
+  } else if (items.length === 0 && state.isFetching) {
+    // First-visit back-fill in progress. Show a real loading screen with
+    // progress so the user sees the scrape happening rather than staring
+    // at an empty page.
+    const prog = state.fetchProgress || { done: 0, total: 0 };
+    const pct = prog.total ? (100 * prog.done / prog.total).toFixed(1) : 0;
+    body = `
+      <div class="alch-feed-loading">
+        <div class="alch-feed-loading-glyph" aria-hidden="true"><span class="alch-feed-loading-spin"></span></div>
+        <div class="alch-feed-loading-title">scraping cohort activity…</div>
+        <div class="alch-feed-loading-sub" id="alch-feed-loading-progress">
+          ${prog.total ? `${prog.done} of ${prog.total} sources fetched` : "warming up the cache"}
+        </div>
+        <div class="alch-feed-loading-bar">
+          <div class="alch-feed-loading-bar-fill" id="alch-feed-loading-bar-fill" style="width:${pct}%"></div>
+        </div>
+        <div class="alch-feed-loading-foot">
+          team repos + every cohort member's github profile. first run takes a moment;
+          subsequent visits read from the local cache and refresh in the background.
         </div>
       </div>
     `;
