@@ -730,8 +730,8 @@ function renderCalendar() {
         <span class="cs-hint">events · rhythm</span>
       </button>
       <button class="cal-subtab" data-cal-sub="schedule"     aria-selected="${sub === "schedule"}"     type="button">
-        <span class="cs-num">②</span><span class="cs-label">full schedule</span>
-        <span class="cs-hint">every key date</span>
+        <span class="cs-num">②</span><span class="cs-label">key dates</span>
+        <span class="cs-hint">milestones · anchor points</span>
       </button>
       <button class="cal-subtab" data-cal-sub="availability" aria-selected="${sub === "availability"}" type="button">
         <span class="cs-num">③</span><span class="cs-label">availability</span>
@@ -906,7 +906,7 @@ function renderCalThisWeek() {
            <span class="cal-tw-h-count">${upNext.length}</span>
          </header>
          <div class="cal-tw-list">${upNext.map(e => renderEventCard(e)).join("")}</div>
-         <p class="cal-tw-foot"><button class="alch-link-btn" data-cal-jump="schedule">→ see the full schedule</button></p>
+         <p class="cal-tw-foot"><button class="alch-link-btn" data-cal-jump="schedule">→ see all key dates</button></p>
        </section>`
     : "";
 
@@ -960,11 +960,11 @@ function renderCalSchedule() {
     <div class="cal-sched-wrap">
       <header class="cal-sched-pagehead">
         <div>
-          <h3 class="cal-section-title">full schedule</h3>
-          <span class="cal-section-sub">${all.length} event${all.length === 1 ? "" : "s"} · click ✎ on any card to edit</span>
+          <h3 class="cal-section-title">key dates</h3>
+          <span class="cal-section-sub">${all.length} milestone${all.length === 1 ? "" : "s"} · click ✎ on any card to edit</span>
         </div>
         <button class="alch-feed-btn cal-sched-add" type="button" data-cal-add-url="${escAttr(addUrl)}">
-          <span aria-hidden="true">+</span><span>add an event</span>
+          <span aria-hidden="true">+</span><span>add a key date</span>
         </button>
       </header>
       ${sectionsHtml || `<p class="alch-callout">no events yet. click <strong>add an event</strong> to open a PR with a prefilled template.</p>`}
