@@ -116,3 +116,30 @@ export {
 // returned controller's .destroy() releases the GL context (browsers
 // cap to ~16, so destroying on re-render is essential).
 export { mountShape, mountShapesIn, hashColors } from "./shape-canvas.js";
+
+// Cohort availability — pure computation + a token-driven DOM renderer.
+// Used by both the field-guide and the sibling web app.
+export {
+  computeAvailability,
+  renderAvailabilityMatrix,
+  availabilityStylesPath,
+} from "./availability.js";
+
+// Shared cohort surface — extracted from the field-guide alchemy view
+// so the sibling web app can render the same cards, calendar, and
+// edit/PR launcher without reimplementing.
+export { escHtml, escAttr } from "./escape.js";
+export { buildEditPRUrl } from "./pr-url.js";
+export {
+  renderTeamCard,
+  renderPersonCard,
+  renderCohortCard,
+  teamCardHtml,
+  personCardHtml,
+} from "./cohort-card.js";
+export {
+  buildCalendarRows,
+  drawCalendar,
+  renderCohortCalendar,
+} from "./cohort-calendar.js";
+export { renderProfileForm } from "./profile-form.js";
