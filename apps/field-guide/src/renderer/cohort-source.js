@@ -68,13 +68,35 @@ function signatureOf(grouped) {
   return `${grouped.teams.length}:${sig(grouped.teams)}#${grouped.people.length}:${sig(grouped.people)}#${grouped.clusters.length}:${sig(grouped.clusters)}#${grouped.program.length}:${progSig(grouped.program)}#${grouped.asks.length}:${askSig(grouped.asks)}`;
 }
 
+// Dev preview override. Setting `localStorage.setItem("srfg:cohort_source", "local")`
+// in DevTools then reloading forces the app to read the bundled fixture
+// (apps/field-guide/src/cohort-surface.json) instead of GitHub main.
+// Use this to preview a cohort-data PR locally before it merges. Clear with
+// `localStorage.removeItem("srfg:cohort_source")` + reload to return to main.
+function devPreferLocal() {
+  try { return localStorage.getItem("srfg:cohort_source") === "local"; } catch { return false; }
+}
+
 /**
  * Returns latest cohort.surface records grouped by type. Tries
  * GitHub `main` first; falls back to the bundled fixture on any
- * error so the app stays usable offline.
+ * error so the app stays usable offline. Honors the localStorage
+ * `srfg:cohort_source` dev override.
  */
 export async function getCohortSurface() {
   if (_cache) return _cache;
+  if (devPreferLocal()) {
+    try {
+      _cache = await loadFromFixture();
+      _cache._source = "fixture-forced";
+      _cache._sig = signatureOf(_cache);
+      console.log("[cohort-source] DEV override active — reading bundled fixture. Clear with localStorage.removeItem('srfg:cohort_source') + reload.");
+      scheduleRefresh();
+      return _cache;
+    } catch (e) {
+      console.warn("[cohort-source] forced fixture unreadable; falling through to github:", e?.message || e);
+    }
+  }
   try {
     _cache = await loadFromGithub();
     _cache._source = "github";
@@ -92,6 +114,9 @@ export async function getCohortSurface() {
 function scheduleRefresh() {
   if (_refreshTimer) return;
   _refreshTimer = setInterval(async () => {
+    // Dev override pins the fixture — skip the github fetch entirely so
+    // a 5-min refresh doesn't silently overwrite what we built locally.
+    if (devPreferLocal()) return;
     try {
       const fresh = await loadFromGithub();
       const sig = signatureOf(fresh);
