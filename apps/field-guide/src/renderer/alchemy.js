@@ -76,6 +76,7 @@ const state = {
   profile: null,       // local-only: { user, editor state, ... }
   programPage: null,   // active program-handbook page slug (overview | success | rules | schedule)
   atlasFocus: null,    // active tag in the atlas view (null = whole-graph mode)
+  onboardingJustToggled: null,  // step key that was just marked/unmarked done; consumed by wireOnboarding to scroll-into-view the next step
   constellationMode: "clusters",  // "clusters" (shared cluster membership) | "dependencies" (team-asserted dependency edges)
   events: [],          // normalized feed items, latest-first
   fetchedAt: 0,
@@ -956,17 +957,35 @@ function renderOnboarding() {
   const has = (obj, key) => obj && obj[key] != null && String(obj[key]).trim() !== "";
   const done = loadOnboardingDone();
 
+  // Step 01's effective state propagates downstream: once you mark "claim
+  // your person record" done (or the auto-detect found you), steps 02-05
+  // should no longer be greyed out as "blocked". Without this, marking
+  // step 01 done felt like a no-op — the next step stayed un-clickable.
+  const step1Effective = !!me || !!done["claim-person-record"];
+  // Step 05 (project goals) needs a team. Auto-derives from `me.team`;
+  // if we can't auto-derive but step 01 was overridden, we don't block —
+  // the user picks their team in the profile editor.
+  const step5HasTeamContext = !!myTeam || step1Effective;
+
+  // Generic action for "I overrode step 01 but no auto-detected record
+  // exists" — drop the user into the profile editor without prefilling a
+  // record id so they can pick the right one from the dropdown.
+  const openPersonEditorGeneric = { kind: "go-profile", mode: "edit", recordKind: "person", recordId: null, label: "open profile · pick your record" };
+  const openTeamEditorGeneric   = { kind: "go-profile", mode: "edit", recordKind: "team",   recordId: null, label: "open profile · pick your team" };
+
   // `key` is stable across renames + reorders; numbers (n) are display-only.
-  // Step 02 (confirm-your-project) was removed by request — the auto-detect
+  // Step "confirm-your-project" was removed by request — the auto-detect
   // for project assignment lives on the person record's `team` field, which
-  // step 03 (personal API) already pulls into the edit view.
+  // step 02 (personal API) already pulls into the edit view.
   const stepDefs = [
     {
       key: "claim-person-record",
       title: "claim your person record",
       ask: me
         ? `you're already on the map as <strong>${escHtml(me.name || me.record_id)}</strong>.`
-        : "no person record matches you yet. add one so you appear on the cohort map + calendar.",
+        : done["claim-person-record"]
+          ? `you marked this done locally. if your record uses a different github handle than the one in your profile, the auto-detect can't find it — that's fine, the override stands.`
+          : "no person record matches you yet. add one so you appear on the cohort map + calendar.",
       autoComplete: !!me,
       missingState: "missing",
       action: me
@@ -978,36 +997,42 @@ function renderOnboarding() {
       title: "fill in your personal API",
       ask: me
         ? `tell the cohort how to collaborate with you well — comm style, what you'd happily pair on, your weekly rhythm. fields: <code>comm_style</code>, <code>contribute_interests</code>, <code>availability_pref</code>.`
-        : "(complete step 01 first.)",
+        : step1Effective
+          ? `pick your record in the profile editor — these go on it: <code>comm_style</code>, <code>contribute_interests</code>, <code>availability_pref</code>.`
+          : "(complete step 01 first.)",
       autoComplete: !!me && (has(me, "comm_style") || has(me, "contribute_interests") || has(me, "availability_pref")),
-      missingState: !me ? "blocked" : "missing",
+      missingState: !step1Effective ? "blocked" : "missing",
       action: me
         ? { kind: "go-profile", mode: "edit", recordKind: "person", recordId: me.record_id, label: "edit my personal API" }
-        : null,
+        : (step1Effective ? openPersonEditorGeneric : null),
     },
     {
       key: "week-1-intention",
       title: "set your week-1 intention",
       ask: me
         ? `one concrete thing you want to ship or learn this week. lives on your person record as <code>weekly_intention</code> — refresh it every monday.`
-        : "(complete step 01 first.)",
+        : step1Effective
+          ? `one concrete thing you want to ship or learn this week. lives on your person record as <code>weekly_intention</code> — pick your record to set it.`
+          : "(complete step 01 first.)",
       autoComplete: !!me && has(me, "weekly_intention"),
-      missingState: !me ? "blocked" : "missing",
+      missingState: !step1Effective ? "blocked" : "missing",
       action: me
         ? { kind: "go-profile", mode: "edit", recordKind: "person", recordId: me.record_id, label: "write my week-1 intention" }
-        : null,
+        : (step1Effective ? openPersonEditorGeneric : null),
     },
     {
       key: "project-success-criteria",
       title: "set your project's success criteria",
       ask: myTeam
         ? `each project defines its own. fields on <strong>${escHtml(myTeam.name || myTeam.record_id)}</strong>: <code>success_dimensions</code>, <code>weekly_goals</code>, <code>monthly_milestones</code>, <code>graduation_target</code>. this is the office-hours-week-1 conversation.`
-        : "(your record needs a team first — handled by step 01.)",
+        : step5HasTeamContext
+          ? `pick your team in the profile editor and set: <code>success_dimensions</code>, <code>weekly_goals</code>, <code>monthly_milestones</code>, <code>graduation_target</code>. this is the office-hours-week-1 conversation.`
+          : "(complete step 01 first.)",
       autoComplete: !!myTeam && (has(myTeam, "weekly_goals") || has(myTeam, "graduation_target")),
-      missingState: !myTeam ? "blocked" : "missing",
+      missingState: !step5HasTeamContext ? "blocked" : "missing",
       action: myTeam
         ? { kind: "go-profile", mode: "edit", recordKind: (myTeam.kind === "project" ? "project" : "team"), recordId: myTeam.record_id, label: "edit project goals" }
-        : null,
+        : (step5HasTeamContext ? openTeamEditorGeneric : null),
     },
     {
       key: "read-program-handbook",
@@ -1086,8 +1111,35 @@ function wireOnboarding() {
       const key = btn.dataset.onbToggle;
       if (!key) return;
       toggleOnboardingDone(key);
+      // Remember which step we just toggled so the post-render handler
+      // can scroll to (and momentarily pulse) whatever comes next.
+      state.onboardingJustToggled = key;
       render();
     });
+  }
+  // After re-render, surface forward motion: scroll the first step that
+  // still needs action into view + brief pulse highlight. Render() is
+  // animated (~220ms swap) so we wait past that before measuring DOM.
+  if (state.onboardingJustToggled) {
+    const justKey = state.onboardingJustToggled;
+    state.onboardingJustToggled = null;
+    setTimeout(() => {
+      if (!state.canvas) return;
+      // Prefer the step immediately after the one we just toggled. Fall
+      // back to the first non-complete actionable step on the page.
+      const steps = Array.from(state.canvas.querySelectorAll(".alch-onb-step"));
+      const justIdx = steps.findIndex(li => li.querySelector(`[data-onb-toggle="${justKey}"]`));
+      const candidates = justIdx >= 0 ? steps.slice(justIdx + 1) : steps;
+      const next = candidates.find(li => {
+        const st = li.getAttribute("data-state");
+        return st === "missing" || st === "info";
+      });
+      if (next) {
+        next.scrollIntoView({ behavior: "smooth", block: "center" });
+        next.classList.add("is-onb-next-pulse");
+        setTimeout(() => next.classList.remove("is-onb-next-pulse"), 1600);
+      }
+    }, 260);
   }
   for (const btn of state.canvas.querySelectorAll(".alch-onb-action")) {
     btn.addEventListener("click", () => {

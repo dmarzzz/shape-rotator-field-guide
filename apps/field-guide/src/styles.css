@@ -8342,6 +8342,16 @@ html, body {
   color: rgba(229,212,178,0.95);
   opacity: 1;
 }
+/* Brief left-edge pulse on the step the user is being directed to next.
+   Added by wireOnboarding after a mark-done click; auto-removed after 1.6s. */
+@keyframes alch-onb-pulse {
+  0%   { box-shadow: inset 4px 0 0 0 #c44025; background: rgba(196,64,37,0.10); }
+  60%  { box-shadow: inset 4px 0 0 0 rgba(196,64,37,0.0); background: rgba(196,64,37,0.04); }
+  100% { box-shadow: inset 4px 0 0 0 rgba(196,64,37,0.0); background: transparent; }
+}
+.alch-onb-step.is-onb-next-pulse {
+  animation: alch-onb-pulse 1.6s ease-out 1;
+}
 
 /* ── program handbook ────────────────────────────────────────────── */
 .alch-prog-head { margin-bottom: 20px; max-width: 70ch; }
