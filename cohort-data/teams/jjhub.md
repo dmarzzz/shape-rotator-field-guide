@@ -6,7 +6,6 @@ kind: team
 
 name: JJHub
 focus: agentic coding platform
-lead: Will Cory
 members_count: 1
 geo: PST
 domain: ai

@@ -6,7 +6,6 @@ kind: team
 
 name: Crossroads
 focus: Liquefaction-built wallet
-lead: Chloe Wang
 members_count: 2
 geo: NYC (Cornell Tech)
 domain: crypto

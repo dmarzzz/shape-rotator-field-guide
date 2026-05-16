@@ -7,7 +7,6 @@ kind: project
 # surface fields (visible to all participants)
 name: searxng-wth-frnds
 focus: LAN-first peer search daemon
-lead: dmarz
 members_count: 1
 geo: NYC
 domain: crypto

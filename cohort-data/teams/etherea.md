@@ -6,7 +6,6 @@ kind: team
 
 name: Etherea
 focus: generative live-stage system
-lead: James Barnes
 members_count: 2
 geo: NYC (the Convent)
 domain: app-ux

@@ -6,7 +6,6 @@ kind: team
 
 name: Conclave
 focus: NDAI framework · skills runtime
-lead: Prakhar Ojha
 members_count: 2
 geo: India / NY
 domain: ai

@@ -6,7 +6,6 @@ kind: team
 
 name: TeeSQL
 focus: TEE Postgres on dstack
-lead: Dan Matthews
 members_count: 2
 geo: NYC / Estonia
 domain: tee

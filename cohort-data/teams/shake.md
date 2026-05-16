@@ -5,7 +5,6 @@ schema_version: 1
 kind: project
 name: "Shake"
 focus: "Shake is a social network app that connects people when they shake their phones together."
-lead: "quasimatt"
 members_count: 1
 geo: "NYC"
 domain: app-ux
