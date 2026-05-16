@@ -130,6 +130,7 @@ function build() {
   const people   = loadDir(path.join(COHORT_DIR, "people"),   "person",  schema.people?.surface_fields   || []);
   const clusters = loadDir(path.join(COHORT_DIR, "clusters"), "cluster", schema.clusters?.surface_fields || []);
   const program  = loadProgramDir(path.join(COHORT_DIR, "program"),      schema.program?.surface_fields  || []);
+  const events   = loadDir(path.join(COHORT_DIR, "events"),   "event",   schema.events?.surface_fields   || []);
   const asks     = loadDir(path.join(COHORT_DIR, "asks"),     "ask",     schema.asks?.surface_fields     || []);
 
   // Cohort-wide controlled vocab + UI configuration the renderer needs at
@@ -145,6 +146,7 @@ function build() {
     people,
     clusters,
     program,
+    events,
     asks,
     cohort_vocab,
   };
@@ -185,7 +187,7 @@ function main() {
 
   fs.mkdirSync(path.dirname(OUT_PATH), { recursive: true });
   fs.writeFileSync(OUT_PATH, json);
-  console.log(`[build-bundles] wrote ${OUT_PATH} (${built.teams.length} teams, ${built.people.length} people, ${built.clusters.length} clusters, ${built.program.length} program pages, ${built.asks.length} asks)`);
+  console.log(`[build-bundles] wrote ${OUT_PATH} (${built.teams.length} teams, ${built.people.length} people, ${built.clusters.length} clusters, ${built.program.length} program pages, ${built.events.length} events, ${built.asks.length} asks)`);
 }
 
 main();
