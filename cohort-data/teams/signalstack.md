@@ -18,6 +18,29 @@ links:
   slides: https://ronturetzky.github.io/sigstack-slides/
 paper_basis: null
 traction: Vitalik blog mention · prior at Lightblocks (Ittay Eyal lab, eoracle)
+now: shipping the beta of confidential LLM inference on Intel TDX inside Signal
+success_dimensions:
+  - productization
+  - collaborative
+prior_shipping:
+  - SignalStack — confidential LLM inference on Intel TDX (beta development)
+  - Vitalik Buterin acknowledgment in April 2026 secure-LLM blog post
+skill_areas:
+  - tee
+  - dstack
+  - agentic
+  - attestation
+dependencies:
+  - prova
+  - dealproof
+  - conclave
+seeking:
+  - cohort teams comparing TEE deployment patterns + attestation UX
+  - integration testers for the attestation verification SDK
+offering:
+  - TEE deployment workshop (setup, remote attestation, pitfalls)
+  - open-source attestation verification SDK for cohort
+  - AI tasks + AI translation features available to cohort via Signal
 ---
 
 ## about

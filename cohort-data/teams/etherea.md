@@ -18,6 +18,28 @@ links:
   website: http://www.withetherea.com
 paper_basis: null
 traction: Hardware in NYC creative spaces · exhibited at Anthropic HQ · Florent residency
+now: prepping a live-stage demo with cohort voice/transcript input
+success_dimensions:
+  - productization
+  - collaborative
+prior_shipping:
+  - Etherea — generative stage system (hardware installed in NYC creative spaces)
+  - Florent residency (historic NYC Meatpacking venue)
+  - Exhibited at Anthropic HQ
+  - Live performer interaction with multimodal AI
+skill_areas:
+  - generative-media
+  - design
+  - agentic
+dependencies:
+  - tinycloud
+  - contexto
+seeking:
+  - cohort feedback on the Teleport Router architecture
+  - product framing + fundraising mentorship
+offering:
+  - live demo-day visuals for cohort teams (voice → transcript → stage)
+  - design + storytelling consultation
 ---
 
 ## about
