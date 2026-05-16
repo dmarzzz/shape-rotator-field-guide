@@ -19,6 +19,13 @@
 import {
   SHAPES, SHAPE_BY_KEY, shapeForTeam, shapeSvgByFam, domainLabel,
   mountShape, mountShapesIn,
+  // Extracted into shape-ui so the sibling web app can render the same
+  // cohort surface. The Electron renderer keeps the same call sites —
+  // only the implementations moved.
+  escHtml, escAttr,
+  buildEditPRUrl,
+  teamCardHtml, personCardHtml,
+  buildCalendarRows, drawCalendar,
 } from "@shape-rotator/shape-ui";
 import { getCohortSurface, subscribeToCohortChanges } from "./cohort-source.js";
 
@@ -26,7 +33,7 @@ const ALCHEMY_LS_KEY  = "srwk:alchemy_mode";
 const PROFILE_LS_KEY  = "srwk:profile_v1";
 const EVENTS_LS_KEY   = "srwk:cohort_events_v1";
 const DETAIL_LS_KEY   = "srwk:alchemy_detail_v1";
-const ALCHEMY_MODES   = ["feed", "shapes", "pulse", "constellation", "calendar", "profile"];
+const ALCHEMY_MODES   = ["feed", "shapes", "pulse", "constellation", "calendar", "profile", "onboarding", "program", "asks", "atlas"];
 
 const WEEKS_TOTAL = 10;
 const WEEK_NOW = 1; // TODO: bump weekly, or derive from a cohort start date.
@@ -61,8 +68,11 @@ const state = {
   detailRecordId: null,     // when set, the alchemy canvas renders the full detail page for this team/project
   detailReturnMode: null,   // remembered so the back button knows where to land
   shapeControllers: [],     // active shader-canvas controllers — destroyed before each re-render so GL contexts don't leak
-  cohort: null,        // { teams, clusters, people } from cohort-source
+  cohort: null,        // { teams, clusters, people, program, asks, cohort_vocab } from cohort-source
   profile: null,       // local-only: { user, editor state, ... }
+  programPage: null,   // active program-handbook page slug (overview | success | rules | schedule)
+  atlasFocus: null,    // active tag in the atlas view (null = whole-graph mode)
+  constellationMode: "clusters",  // "clusters" (shared cluster membership) | "dependencies" (team-asserted dependency edges)
   events: [],          // normalized feed items, latest-first
   fetchedAt: 0,
   isFetching: false,
@@ -215,6 +225,10 @@ function render() {
     else if (state.mode === "constellation") renderConstellation();
     else if (state.mode === "calendar") renderCalendar();
     else if (state.mode === "profile") renderProfile();
+    else if (state.mode === "onboarding") renderOnboarding();
+    else if (state.mode === "program") renderProgram();
+    else if (state.mode === "asks") renderAsks();
+    else if (state.mode === "atlas") renderAtlas();
     // Index cards for the staggered entrance.
     const cards = canvas.querySelectorAll(".alch-card, .alch-legend-card, .alch-feed-item");
     cards.forEach((c, i) => c.style.setProperty("--alch-i", String(i)));
@@ -228,6 +242,10 @@ function render() {
       if (state.mode === "feed") refreshFeed({ source: "mode-enter" });
       if (state.mode === "constellation") wireConstellationHover();
       if (state.mode === "calendar") wireCalendar();
+      if (state.mode === "onboarding") wireOnboarding();
+      if (state.mode === "program") wireProgram();
+      if (state.mode === "asks") wireAsks();
+      if (state.mode === "atlas") wireAtlas();
     }
     // Mount shape shaders LAST — every <canvas data-shape-fam> emitted
     // by the renderers above gets one WebGL2 context here. Controllers
@@ -318,9 +336,10 @@ function renderShapes() {
       <button id="dossier-export-png" class="cal-action" type="button">export dossier (png)</button>
     </div>
   `;
+  const cardCtx = { people: state.cohort?.people || [] };
   const cards = records.map((r, idx) => {
     if (r._kind === "person") return personCardHtml(r, idx);
-    return teamCardHtml(r, idx);
+    return teamCardHtml(r, idx, cardCtx);
   }).join("");
   const grid = records.length
     ? `<div class="alch-specimens">${cards}</div>`
@@ -345,95 +364,8 @@ function renderShapes() {
   if (dossierBtn) dossierBtn.addEventListener("click", exportDossier);
 }
 
-function teamCardHtml(t, idx) {
-  const s = shapeForTeam(t);
-  const links = [];
-  const gh   = t?.links?.github;
-  const repo = t?.links?.repo;
-  const x    = t?.links?.x;
-  if (repo && GH_REPO_RE.test(repo)) {
-    links.push(`<div class="alch-card-meta-row"><span class="cm-k">repo</span><span class="cm-v"><a href="https://github.com/${escHtml(repo)}" data-external class="alch-card-repo-link">${escHtml(repo)}</a></span></div>`);
-  }
-  if (gh) links.push(`<div class="alch-card-meta-row"><span class="cm-k">github</span><span class="cm-v"><a href="https://github.com/${escHtml(gh)}" data-external>${escHtml(gh)}</a></span></div>`);
-  if (x)  links.push(`<div class="alch-card-meta-row"><span class="cm-k">x</span><span class="cm-v"><a href="https://x.com/${escHtml(x)}" data-external>@${escHtml(x)}</a></span></div>`);
-  if (!gh && !x && !repo) links.push(`<div class="alch-card-meta-row"><span class="cm-k">links</span><span class="cm-v" style="opacity:0.55">— not yet submitted</span></div>`);
-  const cardCls = (t.is_mentor ? "alch-card alch-card-mentor" : "alch-card") + " is-clickable";
-  const m = Number(t.members_count) || 0;
-  const kind = teamKind(t);
-  // People whose primary `team` or `secondary_teams` includes this record.
-  const teamPeople = (state.cohort?.people || []).filter(p =>
-    p.team === t.record_id || (Array.isArray(p.secondary_teams) && p.secondary_teams.includes(t.record_id))
-  );
-  const membersRow = teamPeople.length
-    ? `<div class="alch-card-meta-row alch-card-members-row">
-         <span class="cm-k">${kind === "project" ? "contributors" : "members"}</span>
-         <span class="cm-v">${teamPeople.map(p =>
-           `<button type="button" class="alch-card-member" data-person="${escHtml(p.record_id)}">${escHtml(p.name || p.record_id)}</button>`
-         ).join('<span class="acm-sep">·</span>')}</span>
-       </div>`
-    : "";
-  return `
-    <article class="${cardCls}" data-record-id="${escHtml(t.record_id)}" data-display-id="${displayId(idx)}" tabindex="0" role="button" aria-label="${escHtml(t.name)} — open detail">
-      <div class="alch-card-tag">
-        <span class="ct-id">SHAPE-${displayId(idx)}</span>
-        <span class="ct-sep">·</span>
-        <span class="ct-kind ct-kind-${escHtml(kind)}">${escHtml(kind)}</span>
-        <span class="ct-sep">·</span>
-        <span>${escHtml(s ? s.name : domainLabel(t.domain))}</span>
-        <span class="ct-sep">·</span>
-        <span>${escHtml(domainLabel(t.domain))}</span>
-        ${t.is_mentor ? `<span class="ct-sep">·</span><span>mentor</span>` : ""}
-      </div>
-      <div class="alch-card-shape"><canvas data-shape-fam="${s ? s.fam : 0}" data-shape-kind="${escAttr(kind)}" data-shape-seed="${escAttr(t.record_id)}"></canvas></div>
-      <div class="alch-card-name">${escHtml(t.name)}</div>
-      <div class="alch-card-rule"></div>
-      <div class="alch-card-meta">
-        <div class="alch-card-meta-row"><span class="cm-k">focus</span><span class="cm-v">${escHtml(t.focus)}</span></div>
-        <div class="alch-card-meta-row"><span class="cm-k">lead</span><span class="cm-v">${escHtml(t.lead)}</span></div>
-        <div class="alch-card-meta-row"><span class="cm-k">${kind === "project" ? "contributors" : "team"}</span><span class="cm-v">${m} ${m === 1 ? "person" : "people"}</span></div>
-        <div class="alch-card-meta-row"><span class="cm-k">geo</span><span class="cm-v">${escHtml(t.geo)}</span></div>
-        ${membersRow}
-        ${links.join("")}
-      </div>
-    </article>`;
-}
-
-function personCardHtml(p, idx) {
-  // People don't have a shape vocabulary — derive a fam from their
-  // record_id hash purely so the per-family rotation/symmetry/specimen
-  // varies between individuals. The shader sees u_kind=2 and overrides
-  // the silhouette to a circle medallion regardless.
-  const fam = Math.abs(hashStr(p.record_id || "_")) % 6;
-  const links = [];
-  const gh = p?.links?.github;
-  const x  = p?.links?.x;
-  const w  = p?.links?.website;
-  const li = p?.links?.linkedin;
-  if (gh) links.push(`<div class="alch-card-meta-row"><span class="cm-k">github</span><span class="cm-v"><a href="https://github.com/${escHtml(gh)}" data-external>${escHtml(gh)}</a></span></div>`);
-  if (x)  links.push(`<div class="alch-card-meta-row"><span class="cm-k">x</span><span class="cm-v"><a href="https://x.com/${escHtml(x.replace(/^@/, ""))}" data-external>@${escHtml(x.replace(/^@/, ""))}</a></span></div>`);
-  if (w)  links.push(`<div class="alch-card-meta-row"><span class="cm-k">site</span><span class="cm-v"><a href="${escHtml(w.startsWith("http") ? w : `https://${w}`)}" data-external>${escHtml(w.replace(/^https?:\/\//, ""))}</a></span></div>`);
-  if (li) links.push(`<div class="alch-card-meta-row"><span class="cm-k">linkedin</span><span class="cm-v"><a href="https://linkedin.com/in/${escHtml(li)}" data-external>${escHtml(li)}</a></span></div>`);
-  if (!gh && !x && !w && !li) links.push(`<div class="alch-card-meta-row"><span class="cm-k">links</span><span class="cm-v" style="opacity:0.55">— not yet submitted</span></div>`);
-  return `
-    <article class="alch-card is-clickable alch-card-person" data-record-id="${escHtml(p.record_id)}" data-display-id="${displayId(idx)}" tabindex="0" role="button" aria-label="${escHtml(p.name)} — open profile">
-      <div class="alch-card-tag">
-        <span class="ct-id">PERSON-${displayId(idx)}</span>
-        <span class="ct-sep">·</span>
-        <span class="ct-kind ct-kind-person">individual</span>
-        <span class="ct-sep">·</span>
-        <span>${escHtml(domainLabel(p.domain))}</span>
-      </div>
-      <div class="alch-card-shape"><canvas data-shape-fam="${fam}" data-shape-kind="person" data-shape-seed="${escAttr(p.record_id)}"></canvas></div>
-      <div class="alch-card-name">${escHtml(p.name)}</div>
-      <div class="alch-card-rule"></div>
-      <div class="alch-card-meta">
-        <div class="alch-card-meta-row"><span class="cm-k">role</span><span class="cm-v">${escHtml(p.role || "—")}</span></div>
-        <div class="alch-card-meta-row"><span class="cm-k">team</span><span class="cm-v">${escHtml(p.team || "—")}</span></div>
-        <div class="alch-card-meta-row"><span class="cm-k">geo</span><span class="cm-v">${escHtml(p.geo || "—")}</span></div>
-        ${links.join("")}
-      </div>
-    </article>`;
-}
+// teamCardHtml / personCardHtml live in @shape-rotator/shape-ui now.
+// The Electron renderer keeps the same call sites — see imports above.
 
 // ─── pulse ───────────────────────────────────────────────────────────
 function renderPulse() {
@@ -493,6 +425,7 @@ function hashStr(s) {
 function renderConstellation() {
   const teams = state.cohort.teams;
   const clusters = state.cohort.clusters;
+  const mode = state.constellationMode || "clusters";
 
   const W = 980, H = 540, CX = W / 2, CY = H / 2, R = 215;
   const byRecordId = new Map(teams.map(t => [t.record_id, t]));
@@ -502,17 +435,42 @@ function renderConstellation() {
   });
   const posByRecordId = new Map(positions.map(p => [p.t.record_id, p]));
 
+  // Build edges based on the selected mode.
+  // - "clusters":     every pair of teams that share a cluster gets one edge per cluster (existing behavior).
+  // - "dependencies": directed edges from each team to its `dependencies[]` records. Asserted by the team itself.
   const edges = [];
-  for (const cl of clusters) {
-    const present = (cl.teams || []).filter(rid => byRecordId.has(rid));
-    for (let i = 0; i < present.length; i++) {
-      for (let j = i + 1; j < present.length; j++) {
-        const a = posByRecordId.get(present[i]);
-        const b = posByRecordId.get(present[j]);
-        if (a && b) edges.push({ a, b, cluster: cl });
+  if (mode === "clusters") {
+    for (const cl of clusters) {
+      const present = (cl.teams || []).filter(rid => byRecordId.has(rid));
+      for (let i = 0; i < present.length; i++) {
+        for (let j = i + 1; j < present.length; j++) {
+          const a = posByRecordId.get(present[i]);
+          const b = posByRecordId.get(present[j]);
+          if (a && b) edges.push({ a, b, cluster: cl });
+        }
+      }
+    }
+  } else if (mode === "dependencies") {
+    // Each team's self-asserted dependency list. Deduped by unordered pair
+    // so a mutual "we depend on each other" only draws one edge.
+    const seen = new Set();
+    for (const t of teams) {
+      const deps = Array.isArray(t.dependencies) ? t.dependencies : [];
+      for (const depId of deps) {
+        if (!byRecordId.has(depId)) continue;
+        const k = [t.record_id, depId].sort().join("→");
+        if (seen.has(k)) continue;
+        seen.add(k);
+        const a = posByRecordId.get(t.record_id);
+        const b = posByRecordId.get(depId);
+        if (a && b) edges.push({ a, b, cluster: null, kind: "dependency" });
       }
     }
   }
+
+  // Multi-line dedupe: cluster mode can have multiple edges between the
+  // same pair (one per shared cluster); dependencies mode is already
+  // deduped above (each pair appears once) so the offset becomes a no-op.
   const dup = new Map();
   for (const e of edges) {
     const k = [e.a.t.record_id, e.b.t.record_id].sort().join("→");
@@ -528,7 +486,9 @@ function renderConstellation() {
     const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
     const len = Math.hypot(dx, dy) || 1;
     const px = -dy / len * offset, py = dx / len * offset;
-    const cls = `ac-edge ac-edge-${e.cluster.record_id || e.cluster.name || "x"}`;
+    const cls = mode === "dependencies"
+      ? "ac-edge ac-edge-dependency"
+      : `ac-edge ac-edge-${e.cluster.record_id || e.cluster.name || "x"}`;
     return `<line class="${cls}" data-a="${escHtml(e.a.t.record_id)}" data-b="${escHtml(e.b.t.record_id)}"
       x1="${(e.a.x + px).toFixed(1)}" y1="${(e.a.y + py).toFixed(1)}"
       x2="${(e.b.x + px).toFixed(1)}" y2="${(e.b.y + py).toFixed(1)}"/>`;
@@ -540,12 +500,26 @@ function renderConstellation() {
       <text class="ac-node-label" y="26" text-anchor="middle">${escHtml(t.name)}</text>
     </g>`).join("");
 
-  const legend = clusters.map(cl => `
-    <span class="acl-item"><span class="acl-swatch acl-swatch-${escHtml(cl.record_id)}"></span>${escHtml(cl.label)}</span>
-  `).join("");
+  const legend = mode === "clusters"
+    ? clusters.map(cl => `<span class="acl-item"><span class="acl-swatch acl-swatch-${escHtml(cl.record_id)}"></span>${escHtml(cl.label)}</span>`).join("")
+    : `<span class="acl-item"><span class="acl-swatch acl-swatch-dependency"></span>declared dependency · self-asserted by the team</span>`;
+
+  const calloutBody = mode === "clusters"
+    ? `Edges are the synergy clusters from the cohort surface data — every pair of teams that share a cluster gets one line per cluster (so Conclave, which sits in three, fans out). Mentor cards are rendered hollow.`
+    : `Edges are <code>dependencies[]</code> declared by each team — "we depend on this team's output" or "we'd unblock with them." Self-asserted, asymmetric source data, deduped per pair. Mentor cards are rendered hollow. See <button class="alch-link-btn" data-go="program" data-program-page="rules">program · rules</button> for why we don't infer connections automatically.`;
 
   state.canvas.innerHTML = `
     <div class="alch-constellation">
+      <nav class="alch-const-modes" role="tablist" aria-label="constellation edge source">
+        <button class="alch-const-mode-btn" data-const-mode="clusters" aria-selected="${mode === "clusters"}" type="button">
+          <span class="acm-glyph" aria-hidden="true">◑</span><span class="acm-label">clusters</span>
+          <span class="acm-hint">shared cluster membership</span>
+        </button>
+        <button class="alch-const-mode-btn" data-const-mode="dependencies" aria-selected="${mode === "dependencies"}" type="button">
+          <span class="acm-glyph" aria-hidden="true">↬</span><span class="acm-label">dependencies</span>
+          <span class="acm-hint">team-asserted edges</span>
+        </button>
+      </nav>
       <div class="alch-constellation-stage">
         <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
           ${edgeMarkup}
@@ -553,15 +527,12 @@ function renderConstellation() {
         </svg>
       </div>
       <div class="alch-constellation-legend">${legend}</div>
-      <p class="alch-callout"><strong>constellation · v0.1</strong><br/>
-      Edges are the synergy clusters from the cohort surface data — every pair of teams that share a cluster gets one line per cluster (so Conclave, which sits in three, fans out). Mentor cards are rendered hollow.</p>
+      <p class="alch-callout"><strong>constellation · v0.2</strong><br/>${calloutBody}</p>
     </div>
   `;
 }
 
-function escHtml(s) {
-  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
+// escHtml / escAttr live in @shape-rotator/shape-ui now (imported above).
 
 // ─── shape card → drawer ─────────────────────────────────────────────
 function wireShapeCardClicks() {
@@ -613,13 +584,34 @@ function closeDetail() {
 // ─── constellation hover ─────────────────────────────────────────────
 function wireConstellationHover() {
   const stage = state.canvas.querySelector(".alch-constellation-stage");
-  if (!stage) return;
-  const groups = stage.querySelectorAll(".ac-node-group");
-  for (const g of groups) {
-    const rid = g.dataset.recordId;
-    g.addEventListener("mouseenter", () => setConstellationHover(stage, rid, true));
-    g.addEventListener("mouseleave", () => setConstellationHover(stage, rid, false));
-    g.addEventListener("click", () => openDrawer(rid));
+  if (stage) {
+    const groups = stage.querySelectorAll(".ac-node-group");
+    for (const g of groups) {
+      const rid = g.dataset.recordId;
+      g.addEventListener("mouseenter", () => setConstellationHover(stage, rid, true));
+      g.addEventListener("mouseleave", () => setConstellationHover(stage, rid, false));
+      g.addEventListener("click", () => openDrawer(rid));
+    }
+  }
+  // Mode-toggle nav: switches the edge source between cluster-membership
+  // and team-asserted dependencies. State persists for the session.
+  for (const btn of state.canvas.querySelectorAll(".alch-const-mode-btn[data-const-mode]")) {
+    btn.addEventListener("click", () => {
+      const next = btn.dataset.constMode;
+      if (next === state.constellationMode) return;
+      state.constellationMode = next;
+      render();
+    });
+  }
+  // Inline jump to program → rules from the callout (dependencies mode).
+  for (const b of state.canvas.querySelectorAll(".alch-link-btn[data-go='program']")) {
+    b.addEventListener("click", () => {
+      state.mode = "program";
+      state.programPage = b.dataset.programPage || null;
+      try { localStorage.setItem(ALCHEMY_LS_KEY, "program"); } catch {}
+      syncRailSelection();
+      render();
+    });
   }
 }
 function setConstellationHover(stage, recordId, on) {
@@ -700,60 +692,13 @@ function daysBetween(a, b) {
 function fmtShortDate(d) {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).toLowerCase();
 }
-function fmtMonth(d) {
-  return d.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).toLowerCase();
-}
-
-function buildCalendarRows(cohort) {
-  // Group people by team. Within each group: lead first, then alpha by name.
-  // Teams without people are skipped — only show what's populated.
-  // "_orphan" group (team: null) renders LAST as "individuals (no team)".
-  const teams = cohort.teams || [];
-  const people = cohort.people || [];
-  const teamById = new Map(teams.map(t => [t.record_id, t]));
-
-  const buckets = new Map();
-  for (const p of people) {
-    const key = p.team || "_orphan";
-    if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push(p);
-    // Also list the person under each secondary team they touch. We
-    // tag the clone with __secondary so the renderer can render them
-    // with reduced emphasis (no "lead" indicator, etc.).
-    const sec = Array.isArray(p.secondary_teams) ? p.secondary_teams : [];
-    for (const stk of sec) {
-      if (!stk) continue;
-      if (!buckets.has(stk)) buckets.set(stk, []);
-      buckets.get(stk).push({ ...p, __secondary: true, role: p.role === "lead" ? null : p.role });
-    }
-  }
-  for (const arr of buckets.values()) {
-    arr.sort((a, b) => {
-      const al = a.role === "lead" ? 0 : 1;
-      const bl = b.role === "lead" ? 0 : 1;
-      if (al !== bl) return al - bl;
-      return String(a.name || a.record_id).localeCompare(String(b.name || b.record_id));
-    });
-  }
-
-  // Order team groups: leads-with-cards first (by team name), orphan last.
-  const orderedKeys = Array.from(buckets.keys()).filter(k => k !== "_orphan").sort((a, b) => {
-    const ta = teamById.get(a)?.name || a;
-    const tb = teamById.get(b)?.name || b;
-    return String(ta).localeCompare(String(tb));
-  });
-  if (buckets.has("_orphan")) orderedKeys.push("_orphan");
-
-  const rows = [];
-  for (const key of orderedKeys) {
-    const t = key === "_orphan"
-      ? { record_id: "_orphan", name: "individuals", kind: null }
-      : (teamById.get(key) || { record_id: key, name: key, kind: null });
-    rows.push({ type: "team", team: t });
-    for (const p of buckets.get(key)) rows.push({ type: "person", person: p, team: t });
-  }
-  return rows;
-}
+// fmtMonth, buildCalendarRows, drawCalendar, drawPersonRow,
+// drawHeadcountStrip, and roundRect have moved to
+// @shape-rotator/shape-ui (cohort-calendar.js) so the sibling web app
+// can render the same calendar. The Electron renderer keeps the same
+// call sites — buildCalendarRows + drawCalendar are imported above.
+// personColors and hsl stay here because the dossier exporter
+// (drawShapeGlyph) uses them too.
 
 function renderCalendar() {
   const start = isoToDate(CAL_PROGRAM_START);
@@ -778,11 +723,23 @@ function renderCalendar() {
         <button id="cal-export-pdf" class="cal-action" type="button">export pdf</button>
       </div>
     </header>
-    <div class="cal-scroll">
-      <canvas id="cal-canvas" width="${w}" height="${h}" style="width:${w}px; height:${h}px;"></canvas>
-    </div>
-    <p class="alch-callout"><strong>cohort calendar · v0.1</strong><br/>
-    each row is one individual. the filled bar is their overall window in the cohort; striped sections are absences (vacations, conferences, remote weeks). a vertical mark shows today. export the full canvas as a PNG to share over messaging — renders inline in iMessage/Slack/Discord.</p>
+
+    ${renderKeyDatesStrip()}
+
+    ${renderRhythmCard()}
+
+    <section class="cal-section cal-section-presence">
+      <header class="cal-section-head">
+        <h3 class="cal-section-title">presence</h3>
+        <span class="cal-section-sub">who is here, when · striped = absence</span>
+      </header>
+      <div class="cal-scroll">
+        <canvas id="cal-canvas" width="${w}" height="${h}" style="width:${w}px; height:${h}px;"></canvas>
+      </div>
+    </section>
+
+    <p class="alch-callout"><strong>cohort calendar · v0.2</strong><br/>
+    key dates + weekly rhythm at the top set the program's beat; the gantt below shows who's actually in the room each day (striped = absence). export captures the full presence canvas — renders inline in iMessage/Slack/Discord.</p>
   `;
 
   const cnv = document.getElementById("cal-canvas");
@@ -795,524 +752,6 @@ function renderCalendar() {
   const ctx = cnv.getContext("2d");
   ctx.scale(dpr, dpr);
   drawCalendar(ctx, w, h, rows, start, end, numDays);
-}
-
-function drawCalendar(ctx, W, H, rows, start, end, numDays) {
-  // Background.
-  ctx.fillStyle = CAL_BG;
-  ctx.fillRect(0, 0, W, H);
-
-  const gridX = CAL_LEFT_W;
-  const gridY = CAL_HEADER_H;
-  const gridW = numDays * CAL_DAY_W;
-  // Compute body height from rows.
-  let bodyH = 0;
-  for (const r of rows) bodyH += (r.type === "team" ? CAL_TEAM_H : CAL_ROW_H);
-  const gridH = bodyH;
-
-  // ── Concurrent-headcount strip ─────────────────────────────────────
-  // Above the date axis: a 32px-tall area chart of "people on-site per
-  // day" — counts every person whose window covers the day AND who is
-  // not in an absence for that day. Glance-readable density.
-  drawHeadcountStrip(ctx, rows, start, numDays, gridX);
-
-  // ── Month band — italic Iowan, with a thin baseline above
-  ctx.strokeStyle = CAL_RULE;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(gridX, CAL_DENSITY_H + 14 + 0.5);
-  ctx.lineTo(gridX + numDays * CAL_DAY_W, CAL_DENSITY_H + 14 + 0.5);
-  ctx.stroke();
-  ctx.font = `italic 22px "Iowan Old Style", "Hoefler Text", Georgia, serif`;
-  ctx.fillStyle = CAL_INK_1;
-  ctx.textBaseline = "alphabetic";
-  let segStart = 0;
-  let segDate = new Date(start);
-  for (let i = 1; i <= numDays; i++) {
-    const d = new Date(start);
-    d.setUTCDate(start.getUTCDate() + i);
-    const isLast = i === numDays;
-    if (d.getUTCMonth() !== segDate.getUTCMonth() || isLast) {
-      const endIdx = isLast ? numDays : i;
-      const x = gridX + segStart * CAL_DAY_W;
-      const wSeg = (endIdx - segStart) * CAL_DAY_W;
-      ctx.fillStyle = CAL_INK_1;
-      ctx.globalAlpha = 0.88;
-      ctx.fillText(fmtMonth(segDate), x + 6, CAL_DENSITY_H + 12);
-      ctx.globalAlpha = 1;
-      // Right hairline of month
-      ctx.strokeStyle = CAL_RULE_WEEK;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x + wSeg + 0.5, CAL_HEADER_H - 28);
-      ctx.lineTo(x + wSeg + 0.5, CAL_HEADER_H + gridH);
-      ctx.stroke();
-      segStart = i;
-      segDate = d;
-    }
-  }
-
-  // ── Week zebra (alternating tint per week) ─────────────────────────
-  // Identify Monday boundaries and group days into weeks. Even-numbered
-  // weeks get a subtle warm tint behind them so the body reads as a
-  // run of 7-day bands rather than a sea of identical day cells.
-  // Also tints weekends a touch deeper INSIDE each week.
-  let weekIdx = 0;
-  let weekStartCol = 0;
-  for (let i = 0; i <= numDays; i++) {
-    const d = new Date(start);
-    d.setUTCDate(start.getUTCDate() + i);
-    const isMonday = i > 0 && d.getUTCDay() === 1;
-    const isLast = i === numDays;
-    if (isMonday || isLast) {
-      const x = gridX + weekStartCol * CAL_DAY_W;
-      const w = (i - weekStartCol) * CAL_DAY_W;
-      if (weekIdx % 2 === 1) {
-        // odd weeks (1, 3, 5, ...) — subtle warm wash
-        ctx.fillStyle = "rgba(245, 243, 238, 0.022)";
-        ctx.fillRect(x, gridY, w, gridH);
-      }
-      weekStartCol = i;
-      weekIdx++;
-    }
-  }
-  // Weekend deeper tint on top of the zebra so Sat/Sun pop within weeks.
-  for (let i = 0; i < numDays; i++) {
-    const d = new Date(start);
-    d.setUTCDate(start.getUTCDate() + i);
-    const dow = d.getUTCDay();
-    if (dow === 0 || dow === 6) {
-      const x = gridX + i * CAL_DAY_W;
-      ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
-      ctx.fillRect(x, gridY, CAL_DAY_W, gridH);
-    }
-  }
-
-  // ── Week labels (W01, W02, ...) above the day numbers ─────────────
-  // Anchored to each Monday's column. Italic Iowan, 16px, near-pure
-  // ink — these are the primary horizontal landmarks at any zoom.
-  weekIdx = 0;
-  for (let i = 0; i < numDays; i++) {
-    const d = new Date(start);
-    d.setUTCDate(start.getUTCDate() + i);
-    if (i === 0 || d.getUTCDay() === 1) {
-      weekIdx++;
-      const x = gridX + i * CAL_DAY_W;
-      ctx.font = `italic 16px "Iowan Old Style", "Hoefler Text", Georgia, serif`;
-      ctx.fillStyle = CAL_INK_1;
-      ctx.globalAlpha = 0.90;
-      ctx.textAlign = "left";
-      ctx.textBaseline = "alphabetic";
-      ctx.fillText(`w${String(weekIdx).padStart(2, "0")}`, x + 6, CAL_HEADER_H - 38);
-      ctx.globalAlpha = 1;
-    }
-  }
-
-  // ── Day-of-week single-letter strip (M T W T F S S) above numbers ─
-  // Adds another anchor when scanning the dense grid. Tiny mono.
-  ctx.font = `500 8.5px "Geist Mono", ui-monospace, monospace`;
-  ctx.textBaseline = "alphabetic";
-  ctx.textAlign = "center";
-  const dowLetters = ["S", "M", "T", "W", "T", "F", "S"];
-  for (let i = 0; i < numDays; i++) {
-    const d = new Date(start);
-    d.setUTCDate(start.getUTCDate() + i);
-    const x = gridX + i * CAL_DAY_W;
-    const dow = d.getUTCDay();
-    const isWeekend = dow === 0 || dow === 6;
-    ctx.fillStyle = CAL_INK_1;
-    ctx.globalAlpha = isWeekend ? 0.32 : 0.55;
-    ctx.fillText(dowLetters[dow], x + CAL_DAY_W / 2, CAL_HEADER_H - 24);
-  }
-  ctx.globalAlpha = 1;
-
-  // ── Day-number strip + verticals ───────────────────────────────────
-  // Numbers bumped to 12.5px monospace; Monday + first-of-month verticals
-  // are STRONG (1.5px @ ~0.36 opacity) so weeks separate visibly.
-  ctx.font = `500 12.5px "Geist Mono", "Berkeley Mono", ui-monospace, monospace`;
-  ctx.textBaseline = "alphabetic";
-  for (let i = 0; i < numDays; i++) {
-    const d = new Date(start);
-    d.setUTCDate(start.getUTCDate() + i);
-    const x = gridX + i * CAL_DAY_W;
-    const day = d.getUTCDate();
-    const dow = d.getUTCDay();
-    const isMonday = dow === 1;
-    const isFirstOfMonth = day === 1;
-    const isWeekend = dow === 0 || dow === 6;
-    ctx.fillStyle = CAL_INK_1;
-    ctx.globalAlpha = isMonday || isFirstOfMonth ? 0.95 : (isWeekend ? 0.45 : 0.72);
-    ctx.textAlign = "center";
-    ctx.fillText(String(day), x + CAL_DAY_W / 2, CAL_HEADER_H - 8);
-    ctx.globalAlpha = 1;
-    ctx.textAlign = "left";
-    // Verticals: STRONG on Monday + first-of-month, faint hairline daily.
-    if (isFirstOfMonth) {
-      ctx.strokeStyle = "rgba(245, 243, 238, 0.42)";
-      ctx.lineWidth = 2;
-    } else if (isMonday) {
-      ctx.strokeStyle = "rgba(245, 243, 238, 0.36)";
-      ctx.lineWidth = 1.5;
-    } else {
-      ctx.strokeStyle = "rgba(245, 243, 238, 0.05)";
-      ctx.lineWidth = 1;
-    }
-    ctx.beginPath();
-    ctx.moveTo(x + 0.5, CAL_HEADER_H - 16);
-    ctx.lineTo(x + 0.5, CAL_HEADER_H + gridH);
-    ctx.stroke();
-  }
-  // Closing vertical at the very right edge.
-  ctx.strokeStyle = "rgba(245, 243, 238, 0.36)";
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(gridX + numDays * CAL_DAY_W + 0.5, CAL_HEADER_H - 16);
-  ctx.lineTo(gridX + numDays * CAL_DAY_W + 0.5, CAL_HEADER_H + gridH);
-  ctx.stroke();
-
-  // ── Body rows ───────────────────────────────────────────────────────
-  let y = gridY;
-  ctx.textBaseline = "middle";
-  for (const r of rows) {
-    if (r.type === "team") {
-      // Stronger separator above each team — full-width rule + an
-      // oxide tick at the left so the group reads as a new section.
-      ctx.strokeStyle = CAL_RULE_WEEK;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, y + 0.5);
-      ctx.lineTo(W, y + 0.5);
-      ctx.stroke();
-      // Per-team accent square — 4px wide, hash-derived from team id.
-      // Reads as a tiny "flag" before the team name; matches the colour
-      // of bars belonging to people on that team so the eye threads
-      // group → individuals visually.
-      const tcol = personColors(r.team.record_id || r.team.name || "_");
-      ctx.fillStyle = hsl(tcol.hue, 0.70, 0.55, 1);
-      ctx.fillRect(6, y + 10, 4, CAL_TEAM_H - 20);
-      // Team label: MONO 11px UPPERCASE with strong tracking — same
-      // chrome-label voice as the rest of the editorial UI. Indents
-      // and italic serif are reserved for people rows.
-      ctx.font = `500 11px "Geist Mono", "Berkeley Mono", ui-monospace, monospace`;
-      ctx.fillStyle = CAL_INK_1;
-      ctx.globalAlpha = 0.95;
-      ctx.textAlign = "left";
-      const label = String(r.team.name || "—").toUpperCase();
-      // letter-spacing isn't supported on ctx.fillText directly — fake
-      // it by drawing each char and advancing by measureText+track.
-      const track = 1.4;          // px of extra tracking per char
-      let lx = 18;
-      for (const ch of label) {
-        ctx.fillText(ch, lx, y + CAL_TEAM_H / 2 + 1);
-        lx += ctx.measureText(ch).width + track;
-      }
-      // "project" subtag rendered in a smaller mono italic at the
-      // right of the team name when applicable.
-      if (r.team.kind === "project") {
-        ctx.font = `italic 9.5px "Geist Mono", ui-monospace, monospace`;
-        ctx.globalAlpha = 0.55;
-        ctx.fillText("· project", lx + 6, y + CAL_TEAM_H / 2 + 1);
-      }
-      ctx.globalAlpha = 1;
-      y += CAL_TEAM_H;
-      continue;
-    }
-    // Person row
-    const p = r.person;
-    const colors = personColors(p.record_id || p.name || "_");
-    drawPersonRow(ctx, p, colors, gridX, y, gridW, numDays, start, end);
-    y += CAL_ROW_H;
-  }
-
-  // Bottom hairline of grid
-  ctx.strokeStyle = CAL_RULE_WEEK;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, y + 0.5);
-  ctx.lineTo(W, y + 0.5);
-  ctx.stroke();
-
-  // ── "Today" indicator — column band + line + glow + label puck ────
-  // Always painted: if today's within the program window it gets the
-  // full vertical band + ink puck at top. If today's BEFORE the window
-  // (counting down to start) we render a small "+N days" tag at the
-  // very left of the grid header.
-  const today = new Date();
-  const todayUTC = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()));
-  const dayIdx = daysBetween(start, todayUTC);
-  if (dayIdx >= 0 && dayIdx < numDays) {
-    const x = gridX + dayIdx * CAL_DAY_W;
-    // Full column band — 4% white wash spanning header + grid.
-    ctx.fillStyle = "rgba(245, 243, 238, 0.05)";
-    ctx.fillRect(x, CAL_HEADER_H - 18, CAL_DAY_W, gridH + 18);
-    // Glow stroke around the column edges, soft falloff.
-    const grad = ctx.createLinearGradient(x - 6, 0, x + CAL_DAY_W + 6, 0);
-    grad.addColorStop(0,   "rgba(196, 64, 37, 0)");
-    grad.addColorStop(0.5, "rgba(196, 64, 37, 0.10)");
-    grad.addColorStop(1,   "rgba(196, 64, 37, 0)");
-    ctx.fillStyle = grad;
-    ctx.fillRect(x - 6, CAL_HEADER_H - 18, CAL_DAY_W + 12, gridH + 18);
-    // Sharp 1px oxide hairline at center of column.
-    const xc = x + CAL_DAY_W / 2;
-    ctx.strokeStyle = "rgba(196, 64, 37, 0.85)";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(xc, CAL_HEADER_H - 6);
-    ctx.lineTo(xc, CAL_HEADER_H + gridH);
-    ctx.stroke();
-    // "TODAY" puck at the top of the column.
-    ctx.fillStyle = CAL_OXIDE;
-    const puckW = 50;
-    const puckH = 16;
-    const puckX = Math.max(gridX, xc - puckW / 2);
-    const puckY = CAL_HEADER_H - 18;
-    roundRect(ctx, puckX, puckY, puckW, puckH, 8);
-    ctx.fill();
-    ctx.fillStyle = "#0a0908";
-    ctx.font = `600 9px "Geist Mono", "Berkeley Mono", ui-monospace, monospace`;
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "center";
-    ctx.fillText("TODAY", puckX + puckW / 2, puckY + puckH / 2 + 0.5);
-    ctx.textAlign = "left";
-  } else if (dayIdx < 0) {
-    // Today is before the program start — show countdown.
-    const daysUntil = -dayIdx;
-    const label = `T-${daysUntil} day${daysUntil === 1 ? "" : "s"}`;
-    ctx.fillStyle = CAL_OXIDE;
-    const puckW = ctx.measureText ? Math.max(72, label.length * 8 + 24) : 96;
-    const puckH = 16;
-    const puckX = gridX + 6;
-    const puckY = CAL_HEADER_H - 18;
-    roundRect(ctx, puckX, puckY, puckW, puckH, 8);
-    ctx.fill();
-    ctx.fillStyle = "#0a0908";
-    ctx.font = `600 9px "Geist Mono", "Berkeley Mono", ui-monospace, monospace`;
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "center";
-    ctx.fillText(label, puckX + puckW / 2, puckY + puckH / 2 + 0.5);
-    ctx.textAlign = "left";
-  }
-
-  // ── Footer: program span + legend ──────────────────────────────────
-  const footerY = CAL_HEADER_H + gridH + 18;
-  ctx.font = `400 10px "Geist Mono", ui-monospace, monospace`;
-  ctx.fillStyle = CAL_INK_3;
-  ctx.globalAlpha = 0.7;
-  ctx.textBaseline = "alphabetic";
-  ctx.textAlign = "left";
-  ctx.fillText(`shape rotator · summer 2026 · ${fmtShortDate(start)} – ${fmtShortDate(end)}`, 20, footerY);
-
-  // Legend: filled bar = present · striped = absence · vertical = today
-  const legX = 20;
-  const legY = footerY + 22;
-  ctx.fillStyle = CAL_INK_2;
-  // present swatch
-  ctx.globalAlpha = 0.75;
-  ctx.fillRect(legX, legY - 6, 30, 8);
-  ctx.fillStyle = CAL_INK_2;
-  ctx.fillText("present", legX + 36, legY);
-  // absence swatch — diagonal stripes via pattern
-  const absX = legX + 90;
-  ctx.save();
-  ctx.fillStyle = CAL_INK_4;
-  ctx.fillRect(absX, legY - 6, 30, 8);
-  ctx.strokeStyle = CAL_INK_2;
-  ctx.lineWidth = 0.8;
-  ctx.beginPath();
-  for (let i = 0; i < 30; i += 4) {
-    ctx.moveTo(absX + i, legY + 2);
-    ctx.lineTo(absX + i + 8, legY - 6);
-  }
-  ctx.stroke();
-  ctx.restore();
-  ctx.fillStyle = CAL_INK_2;
-  ctx.fillText("absent", absX + 36, legY);
-  // today swatch
-  const todX = absX + 90;
-  ctx.strokeStyle = CAL_OXIDE;
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(todX + 8, legY - 8);
-  ctx.lineTo(todX + 8, legY + 4);
-  ctx.stroke();
-  ctx.fillStyle = CAL_INK_2;
-  ctx.fillText("today", todX + 18, legY);
-  ctx.globalAlpha = 1;
-}
-
-function drawPersonRow(ctx, person, colors, gridX, rowY, gridW, numDays, start, end) {
-  // Left label — name on top, role/email tiny underneath
-  ctx.textAlign = "left";
-  ctx.textBaseline = "middle";
-  // Italic Iowan for names — smaller than the team header (which is
-  // 11px mono CAPS in white) + indented further so each row reads as
-  // "child of the team group above it" rather than competing with it.
-  ctx.font = `italic 13.5px "Iowan Old Style", "Hoefler Text", Georgia, serif`;
-  ctx.fillStyle = CAL_INK_1;
-  ctx.globalAlpha = 0.85;
-  const name = person.name || person.record_id || "—";
-  ctx.fillText(name, 34, rowY + CAL_ROW_H / 2);
-  ctx.globalAlpha = 1;
-
-  // Lane background — subtle dark fill across the whole grid for this row
-  ctx.fillStyle = CAL_BG_LANE;
-  ctx.fillRect(gridX, rowY + 4, gridW, CAL_ROW_H - 8);
-
-  // Window: dates_start..dates_end clipped to [start, end]
-  const pStart = isoToDate(person.dates_start);
-  const pEnd   = isoToDate(person.dates_end);
-  if (!pStart || !pEnd) return;
-  const winStartIdx = Math.max(0, daysBetween(start, pStart));
-  const winEndIdx   = Math.min(numDays - 1, daysBetween(start, pEnd));
-  if (winEndIdx < winStartIdx) return;
-  const winX = gridX + winStartIdx * CAL_DAY_W;
-  const winW = (winEndIdx - winStartIdx + 1) * CAL_DAY_W;
-
-  // Filled window bar — hash-derived gradient using the person's two hues
-  const grad = ctx.createLinearGradient(winX, rowY, winX + winW, rowY);
-  grad.addColorStop(0, hsl(colors.hue, 0.68, 0.52, 0.85));
-  grad.addColorStop(1, hsl(colors.hue2, 0.72, 0.56, 0.85));
-  ctx.fillStyle = grad;
-  ctx.fillRect(winX, rowY + 6, winW, CAL_ROW_H - 12);
-
-  // Inner glow line at top + bottom for the editorial sheen
-  ctx.fillStyle = "rgba(255,255,255,0.10)";
-  ctx.fillRect(winX, rowY + 6, winW, 1);
-  ctx.fillStyle = "rgba(0,0,0,0.18)";
-  ctx.fillRect(winX, rowY + CAL_ROW_H - 7, winW, 1);
-
-  // ── Absences: overlay striped pattern on each absence range ────────
-  const absences = Array.isArray(person.absences) ? person.absences : [];
-  for (const ab of absences) {
-    const aS = isoToDate(ab.start);
-    const aE = isoToDate(ab.end);
-    if (!aS || !aE) continue;
-    const aStartIdx = Math.max(winStartIdx, daysBetween(start, aS));
-    const aEndIdx   = Math.min(winEndIdx, daysBetween(start, aE));
-    if (aEndIdx < aStartIdx) continue;
-    const aX = gridX + aStartIdx * CAL_DAY_W;
-    const aW = (aEndIdx - aStartIdx + 1) * CAL_DAY_W;
-    // Knock out the present color
-    ctx.fillStyle = CAL_BG_LANE;
-    ctx.fillRect(aX, rowY + 6, aW, CAL_ROW_H - 12);
-    // Diagonal stripe overlay so it reads as "scheduled absence" not gap
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(aX, rowY + 6, aW, CAL_ROW_H - 12);
-    ctx.clip();
-    ctx.strokeStyle = `rgba(245, 243, 238, 0.18)`;
-    ctx.lineWidth = 0.8;
-    const stripeSpacing = 6;
-    const rowTop = rowY + 6;
-    const rowBot = rowY + CAL_ROW_H - 6;
-    const h = rowBot - rowTop;
-    ctx.beginPath();
-    for (let sx = aX - h; sx < aX + aW + h; sx += stripeSpacing) {
-      ctx.moveTo(sx, rowBot);
-      ctx.lineTo(sx + h, rowTop);
-    }
-    ctx.stroke();
-    ctx.restore();
-    // Faint outline at the gap edges
-    ctx.strokeStyle = `rgba(245, 243, 238, 0.18)`;
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.moveTo(aX + 0.5, rowY + 6);
-    ctx.lineTo(aX + 0.5, rowY + CAL_ROW_H - 6);
-    ctx.moveTo(aX + aW - 0.5, rowY + 6);
-    ctx.lineTo(aX + aW - 0.5, rowY + CAL_ROW_H - 6);
-    ctx.stroke();
-  }
-}
-
-// Draws the concurrent-headcount strip above the calendar grid — an
-// area chart showing how many people are on-site per day. Counts every
-// person whose dates_start..dates_end window covers the day AND who
-// isn't in an absence range that day. Glance-readable density.
-function drawHeadcountStrip(ctx, rows, start, numDays, gridX) {
-  // Build per-day count
-  const counts = new Array(numDays).fill(0);
-  let maxCount = 0;
-  for (const r of rows) {
-    if (r.type !== "person") continue;
-    const p = r.person;
-    const pStart = isoToDate(p.dates_start);
-    const pEnd   = isoToDate(p.dates_end);
-    if (!pStart || !pEnd) continue;
-    const s = Math.max(0, daysBetween(start, pStart));
-    const e = Math.min(numDays - 1, daysBetween(start, pEnd));
-    const absences = (Array.isArray(p.absences) ? p.absences : [])
-      .map(ab => ({ s: isoToDate(ab.start), e: isoToDate(ab.end) }))
-      .filter(ab => ab.s && ab.e);
-    for (let i = s; i <= e; i++) {
-      const day = new Date(start);
-      day.setUTCDate(start.getUTCDate() + i);
-      // Skip if inside any absence range.
-      let absent = false;
-      for (const ab of absences) {
-        if (day >= ab.s && day <= ab.e) { absent = true; break; }
-      }
-      if (!absent) counts[i]++;
-    }
-    if (e >= s && e < numDays) maxCount = Math.max(maxCount, counts[e]);
-  }
-  for (const c of counts) if (c > maxCount) maxCount = c;
-  if (maxCount === 0) return;
-
-  const stripY = 6;
-  const stripH = CAL_DENSITY_H - 10;
-  // Area chart — step path at top of each day column.
-  ctx.save();
-  const grad = ctx.createLinearGradient(0, stripY, 0, stripY + stripH);
-  grad.addColorStop(0,   "rgba(245, 243, 238, 0.16)");
-  grad.addColorStop(1,   "rgba(245, 243, 238, 0.02)");
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.moveTo(gridX, stripY + stripH);
-  for (let i = 0; i < numDays; i++) {
-    const v = counts[i] / maxCount;
-    const top = stripY + (1 - v) * stripH;
-    const x0 = gridX + i * CAL_DAY_W;
-    const x1 = x0 + CAL_DAY_W;
-    ctx.lineTo(x0, top);
-    ctx.lineTo(x1, top);
-  }
-  ctx.lineTo(gridX + numDays * CAL_DAY_W, stripY + stripH);
-  ctx.closePath();
-  ctx.fill();
-  // Top outline at 50% so the silhouette reads sharp.
-  ctx.beginPath();
-  ctx.strokeStyle = "rgba(245, 243, 238, 0.40)";
-  ctx.lineWidth = 1;
-  for (let i = 0; i < numDays; i++) {
-    const v = counts[i] / maxCount;
-    const top = stripY + (1 - v) * stripH;
-    const x0 = gridX + i * CAL_DAY_W;
-    const x1 = x0 + CAL_DAY_W;
-    if (i === 0) ctx.moveTo(x0, top);
-    else ctx.lineTo(x0, top);
-    ctx.lineTo(x1, top);
-  }
-  ctx.stroke();
-  // Label at the top-left of the strip
-  ctx.font = `500 9px "Geist Mono", "Berkeley Mono", ui-monospace, monospace`;
-  ctx.fillStyle = "rgba(245, 243, 238, 0.55)";
-  ctx.textAlign = "left";
-  ctx.textBaseline = "alphabetic";
-  ctx.fillText(`on-site / day · peak ${maxCount}`, gridX + 6, stripY + 10);
-  ctx.restore();
-}
-
-// Tiny helper: rounded rectangle path.
-function roundRect(ctx, x, y, w, h, r) {
-  const rr = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + rr, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rr);
-  ctx.arcTo(x + w, y + h, x, y + h, rr);
-  ctx.arcTo(x, y + h, x, y, rr);
-  ctx.arcTo(x, y, x + w, y, rr);
-  ctx.closePath();
 }
 
 // FNV-1a hash → two hues in [0,1) for a person, matching the shader's
@@ -1350,6 +789,857 @@ function wireCalendar() {
   if (pngBtn) pngBtn.addEventListener("click", () => exportCalendar("png"));
   const pdfBtn = document.getElementById("cal-export-pdf");
   if (pdfBtn) pdfBtn.addEventListener("click", () => exportCalendar("pdf"));
+  // Inline jumps from the rhythm card → program handbook page.
+  for (const a of state.canvas.querySelectorAll(".alch-link-btn[data-go='program']")) {
+    a.addEventListener("click", () => {
+      state.mode = "program";
+      state.programPage = a.dataset.programPage || null;
+      try { localStorage.setItem(ALCHEMY_LS_KEY, "program"); } catch {}
+      syncRailSelection();
+      render();
+    });
+  }
+}
+
+// ─── program key dates ──────────────────────────────────────────────
+// Static for now — when the cohort wants to edit these, lift into
+// cohort-data/program/schedule.md frontmatter (or a dedicated dates file)
+// and let the build script pass them through.
+//
+// Each entry: { date | range, kind, title, sub }. `kind` drives the swatch:
+//   anchor   — program-wide marker (kickoff, graduation)
+//   external — outside-world conflict/opportunity (ETH NY week, IC3)
+//   demo     — scheduled showing day (midterm, graduation showcase)
+const PROGRAM_KEY_DATES = [
+  { date:  "2026-05-18", kind: "anchor",   title: "program kickoff",     sub: "rolling arrivals · soft onboarding week" },
+  { date:  "2026-05-25", kind: "anchor",   title: "first structured week", sub: "the cohort is fully assembled" },
+  { date:  "2026-06-11", kind: "demo",     title: "midterm · demo day",  sub: "ETH NY week · external-facing showing" },
+  { range: ["2026-06-08", "2026-06-14"], kind: "external", title: "ETH NY week",         sub: "ETH global · NY hackathon · adjacent traffic" },
+  { range: ["2026-06-15", "2026-06-21"], kind: "external", title: "IC3 hackathon",       sub: "andrew + others on the road" },
+  { date:  "2026-07-18", kind: "demo",     title: "graduation",          sub: "10 weeks · final showing + ceremony" },
+];
+
+// Weekly cadence the program runs on. Surfaced as a side card on the
+// calendar so participants can plan around it. Source-of-truth lives in
+// cohort-data/program/schedule.md — this is the "we render the bones
+// always, the prose lives in the program page."
+const PROGRAM_WEEKLY_RHYTHM = [
+  { slot: "morning",        weekdays: "every weekday",   note: "heads-down · no required programming until lunch" },
+  { slot: "5–7pm",          weekdays: "mon · tue · thu", note: "cohort sessions (workshops · talks · whiteboarding)" },
+  { slot: "wednesday",      weekdays: "all day",         note: "no required meetings — protected focus day" },
+  { slot: "9–10pm",         weekdays: "rotating",        note: "salon / roast / improv night — opt-in" },
+  { slot: "office hours",   weekdays: "weekly",          note: "1hr per project · 30min per individual · on-demand slots" },
+  { slot: "weekend",        weekdays: "sat + sun",       note: "off by default — anything programmatic is opt-in" },
+];
+
+// Format a YYYY-MM-DD as "wed jun 11" lowercase, UTC-safe.
+function fmtKeyDate(iso) {
+  const d = isoToDate(iso);
+  if (!d) return "";
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).toLowerCase();
+}
+
+function renderKeyDatesStrip() {
+  const today = new Date();
+  const todayMs = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  const rows = PROGRAM_KEY_DATES.map(d => {
+    const isRange = Array.isArray(d.range);
+    const startIso = isRange ? d.range[0] : d.date;
+    const endIso   = isRange ? d.range[1] : d.date;
+    const startMs  = isoToDate(startIso)?.getTime() ?? 0;
+    const endMs    = isoToDate(endIso)?.getTime() ?? 0;
+    let state = "future";
+    if (todayMs > endMs)        state = "past";
+    else if (todayMs >= startMs) state = "now";
+    const when = isRange
+      ? `${fmtKeyDate(startIso)} → ${fmtKeyDate(endIso)}`
+      : fmtKeyDate(startIso);
+    return `
+      <li class="cal-keydate" data-kind="${escAttr(d.kind)}" data-state="${state}">
+        <span class="cal-keydate-when">${escHtml(when)}</span>
+        <span class="cal-keydate-title">${escHtml(d.title)}</span>
+        <span class="cal-keydate-sub">${escHtml(d.sub)}</span>
+      </li>
+    `;
+  }).join("");
+  return `
+    <section class="cal-section cal-section-keydates">
+      <header class="cal-section-head">
+        <h3 class="cal-section-title">key dates</h3>
+        <span class="cal-section-sub">the anchor points the cohort is steering toward</span>
+      </header>
+      <ul class="cal-keydates">${rows}</ul>
+    </section>
+  `;
+}
+
+function renderRhythmCard() {
+  const rows = PROGRAM_WEEKLY_RHYTHM.map(r => `
+    <li class="cal-rhythm-row">
+      <span class="cal-rhythm-slot">${escHtml(r.slot)}</span>
+      <span class="cal-rhythm-when">${escHtml(r.weekdays)}</span>
+      <span class="cal-rhythm-note">${escHtml(r.note)}</span>
+    </li>
+  `).join("");
+  return `
+    <section class="cal-section cal-section-rhythm">
+      <header class="cal-section-head">
+        <h3 class="cal-section-title">weekly rhythm</h3>
+        <span class="cal-section-sub">the default week, when the program is in flight</span>
+      </header>
+      <ul class="cal-rhythm">${rows}</ul>
+      <p class="cal-section-foot">prose + nuance lives in <button class="alch-link-btn" data-go="program" data-program-page="schedule">program → schedule</button>.</p>
+    </section>
+  `;
+}
+
+// ─── onboarding ─────────────────────────────────────────────────────
+// First-week walkthrough. The app never *stores* progress here — we just
+// surface the steps and hand off to either profile-tab edits or github
+// PR URLs. Each step is "click this to do that"; completion lives in the
+// markdown source (a person has a `weekly_intention`, a team has
+// `weekly_goals` etc.) so the same content shows up in dossiers + feeds.
+//
+// Step contract: { id, title, ask, action, kind }
+//   action.kind = "go-profile"  — switch to the profile sub-mode focused on
+//                                 a specific record + kind. Uses the existing
+//                                 openProfileEditor() helper.
+//   action.kind = "go-program"  — switch to the program sub-mode + a page.
+//   action.kind = "external"    — open a URL in the browser.
+
+function renderOnboarding() {
+  const people  = state.cohort?.people || [];
+  const teams   = state.cohort?.teams  || [];
+  const p       = state.profile || {};
+  // Best-effort identity: prefer an explicit profile.user.record_id, else
+  // match by github handle, else nothing. Onboarding doesn't require this
+  // to be set — the missing case is the most common first-launch state.
+  const meId    = p?.user?.record_id || null;
+  const meGh    = (p?.user?.github || "").toLowerCase();
+  const me = people.find(pp =>
+    (meId && pp.record_id === meId) ||
+    (meGh && (pp.links?.github || "").toLowerCase() === meGh)
+  ) || null;
+  const myTeam = me ? teams.find(t => t.record_id === me.team) : null;
+
+  // Per-step state. "complete" means the underlying field exists in the
+  // surface; "missing" means the user should fill it in. We never mark
+  // "done" locally — the source of truth is always the merged markdown.
+  const has = (obj, key) => obj && obj[key] != null && String(obj[key]).trim() !== "";
+
+  const steps = [
+    {
+      n: "01",
+      title: "claim your person record",
+      ask: me
+        ? `you're already on the map as <strong>${escHtml(me.name || me.record_id)}</strong>.`
+        : "no person record matches you yet. add one so you appear on the cohort map + calendar.",
+      state: me ? "complete" : "missing",
+      action: me
+        ? { kind: "go-profile", mode: "edit", recordKind: "person", recordId: me.record_id, label: "edit my record" }
+        : { kind: "go-profile", mode: "add",  recordKind: "person",                          label: "add my record" },
+    },
+    {
+      n: "02",
+      title: "confirm your project",
+      ask: me && myTeam
+        ? `you're listed under <strong>${escHtml(myTeam.name || myTeam.record_id)}</strong>. open it to confirm the focus + lead are still right.`
+        : me
+          ? "your record doesn't point at a team yet. open profile → edit → person and pick one."
+          : "(complete step 01 first.)",
+      state: me && myTeam ? "complete" : (me ? "partial" : "blocked"),
+      action: (me && myTeam)
+        ? { kind: "go-profile", mode: "edit", recordKind: (myTeam.kind === "project" ? "project" : "team"), recordId: myTeam.record_id, label: "open my team" }
+        : me
+          ? { kind: "go-profile", mode: "edit", recordKind: "person", recordId: me.record_id, label: "set my team" }
+          : null,
+    },
+    {
+      n: "03",
+      title: "fill in your personal API",
+      ask: me
+        ? `tell the cohort how to collaborate with you well — comm style, what you'd happily pair on, your weekly rhythm. fields: <code>comm_style</code>, <code>contribute_interests</code>, <code>availability_pref</code>.`
+        : "(complete step 01 first.)",
+      state: !me ? "blocked" : (has(me, "comm_style") || has(me, "contribute_interests") || has(me, "availability_pref") ? "complete" : "missing"),
+      action: me
+        ? { kind: "go-profile", mode: "edit", recordKind: "person", recordId: me.record_id, label: "edit my personal API" }
+        : null,
+    },
+    {
+      n: "04",
+      title: "set your week-1 intention",
+      ask: me
+        ? `one concrete thing you want to ship or learn this week. lives on your person record as <code>weekly_intention</code> — refresh it every monday.`
+        : "(complete step 01 first.)",
+      state: !me ? "blocked" : (has(me, "weekly_intention") ? "complete" : "missing"),
+      action: me
+        ? { kind: "go-profile", mode: "edit", recordKind: "person", recordId: me.record_id, label: "write my week-1 intention" }
+        : null,
+    },
+    {
+      n: "05",
+      title: "set your project's success criteria",
+      ask: myTeam
+        ? `each project defines its own. fields on <strong>${escHtml(myTeam.name || myTeam.record_id)}</strong>: <code>success_dimensions</code>, <code>weekly_goals</code>, <code>monthly_milestones</code>, <code>graduation_target</code>. this is the office-hours-week-1 conversation.`
+        : "(complete step 02 first.)",
+      state: !myTeam ? "blocked" : (has(myTeam, "weekly_goals") || has(myTeam, "graduation_target") ? "complete" : "missing"),
+      action: myTeam
+        ? { kind: "go-profile", mode: "edit", recordKind: (myTeam.kind === "project" ? "project" : "team"), recordId: myTeam.record_id, label: "edit project goals" }
+        : null,
+    },
+    {
+      n: "06",
+      title: "read the program handbook",
+      ask: "the rules, success vectors, and weekly rhythm are spelled out under <strong>program</strong>. read it once; reference it when something's ambiguous.",
+      state: "info",
+      action: { kind: "go-program", label: "open program handbook" },
+    },
+  ];
+
+  const stepHtml = steps.map(s => {
+    const action = s.action
+      ? `<button class="alch-feed-btn alch-onb-action" type="button"
+                 data-onb-action="${escAttr(JSON.stringify(s.action))}">
+           ${escHtml(s.action.label)}
+         </button>`
+      : "";
+    return `
+      <li class="alch-onb-step" data-state="${escAttr(s.state)}">
+        <div class="alch-onb-step-num">${escHtml(s.n)}</div>
+        <div class="alch-onb-step-body">
+          <h3 class="alch-onb-step-title">${escHtml(s.title)}</h3>
+          <p class="alch-onb-step-ask">${s.ask}</p>
+          ${action}
+        </div>
+        <div class="alch-onb-step-mark" aria-hidden="true"></div>
+      </li>
+    `;
+  }).join("");
+
+  state.canvas.innerHTML = `
+    <header class="alch-onb-head">
+      <h2 class="alch-onb-title">onboarding</h2>
+      <p class="alch-onb-sub">
+        ${me
+          ? `you're <strong>${escHtml(me.name || me.record_id)}</strong>. six steps · take ~30 minutes total · everything below opens a github PR.`
+          : `six steps · take ~30 minutes total · everything below opens a github PR. start with step 01 so the rest can find you.`}
+      </p>
+    </header>
+    <ol class="alch-onb-steps">${stepHtml}</ol>
+    <p class="alch-callout"><strong>onboarding · v0.1</strong><br/>
+    nothing on this page is stored locally — your progress lives in the merged markdown files. that means switching machines, re-installing the app, or someone else looking at <em>your</em> record always sees the same state. revisit weekly to refresh your intention + goals.</p>
+  `;
+}
+
+function wireOnboarding() {
+  for (const btn of state.canvas.querySelectorAll(".alch-onb-action")) {
+    btn.addEventListener("click", () => {
+      let a;
+      try { a = JSON.parse(btn.dataset.onbAction || "{}"); } catch { return; }
+      if (a.kind === "go-profile") {
+        // Reuse the public profile-opener already wired for cross-tab handoff
+        // (defined on window.__srwkOpenProfile). Keeps a single code path
+        // for "land on profile focused on record X".
+        if (typeof window.__srwkOpenProfile === "function") {
+          window.__srwkOpenProfile({ kind: a.recordKind, mode: a.mode || "edit", record_id: a.recordId });
+        }
+      } else if (a.kind === "go-program") {
+        state.mode = "program";
+        try { localStorage.setItem(ALCHEMY_LS_KEY, "program"); } catch {}
+        if (a.page) state.programPage = a.page;
+        syncRailSelection();
+        render();
+      } else if (a.kind === "external" && a.url) {
+        try { window.api?.openExternal?.(a.url); } catch {}
+      }
+    });
+  }
+}
+
+// ─── program handbook ───────────────────────────────────────────────
+// Tabbed renderer over cohort-data/program/*.md. Each page's body_md
+// is shipped in the surface bundle; we do a lightweight markdown→HTML
+// pass (enough for headings, paragraphs, em/strong, code, lists, links).
+// Each page has a "edit this page" link that opens github's web editor
+// at the corresponding cohort-data/program/<slug>.md path.
+
+function escHtmlPreserve(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// Minimal markdown→HTML. Intentionally narrow: handles the subset we
+// actually use in program/*.md. If we need more (tables, footnotes,
+// images) lift a real lib later; today: zero deps, predictable output.
+function renderProgramMarkdown(md) {
+  const src = String(md || "").trim();
+  if (!src) return `<p class="alch-prog-empty">(this page is empty — fill it in via the edit button above.)</p>`;
+  const lines = src.split(/\r?\n/);
+  const out = [];
+  let inUl = false, inOl = false, inP = false;
+  const closeBlocks = () => {
+    if (inP)  { out.push("</p>"); inP = false; }
+    if (inUl) { out.push("</ul>"); inUl = false; }
+    if (inOl) { out.push("</ol>"); inOl = false; }
+  };
+  const inline = (text) => {
+    let t = escHtmlPreserve(text);
+    // code spans first so we don't escape inside them
+    t = t.replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`);
+    t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+    t = t.replace(/_([^_\n]+)_/g, "<em>$1</em>");
+    // [label](url)
+    t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, url) => {
+      const safe = url.startsWith("http") || url.startsWith("/") || url.startsWith("#") ? url : "#";
+      return `<a href="${safe}" data-external>${label}</a>`;
+    });
+    return t;
+  };
+
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, "");
+    if (!line.trim()) { closeBlocks(); continue; }
+    const h = /^(#{1,6})\s+(.+)$/.exec(line);
+    if (h) { closeBlocks(); out.push(`<h${h[1].length} class="alch-prog-h${h[1].length}">${inline(h[2])}</h${h[1].length}>`); continue; }
+    const ul = /^\s*[-*]\s+(.+)$/.exec(line);
+    if (ul) {
+      if (inP)  { out.push("</p>"); inP = false; }
+      if (inOl) { out.push("</ol>"); inOl = false; }
+      if (!inUl) { out.push(`<ul class="alch-prog-ul">`); inUl = true; }
+      out.push(`<li>${inline(ul[1])}</li>`);
+      continue;
+    }
+    const ol = /^\s*\d+\.\s+(.+)$/.exec(line);
+    if (ol) {
+      if (inP)  { out.push("</p>"); inP = false; }
+      if (inUl) { out.push("</ul>"); inUl = false; }
+      if (!inOl) { out.push(`<ol class="alch-prog-ol">`); inOl = true; }
+      out.push(`<li>${inline(ol[1])}</li>`);
+      continue;
+    }
+    // Paragraph text.
+    if (inUl || inOl) closeBlocks();
+    if (!inP) { out.push(`<p class="alch-prog-p">`); inP = true; }
+    else out.push(" ");
+    out.push(inline(line));
+  }
+  closeBlocks();
+  return out.join("");
+}
+
+function renderProgram() {
+  const pages = (state.cohort?.program || []).slice();
+  // Defensive sort by `order` then record_id; matches the build script.
+  pages.sort((a, b) => {
+    const ao = Number.isFinite(a.order) ? a.order : 1e9;
+    const bo = Number.isFinite(b.order) ? b.order : 1e9;
+    if (ao !== bo) return ao - bo;
+    return String(a.record_id).localeCompare(String(b.record_id));
+  });
+
+  if (pages.length === 0) {
+    state.canvas.innerHTML = `
+      <header class="alch-prog-head">
+        <h2 class="alch-prog-title">program</h2>
+        <p class="alch-prog-sub">no program pages in the surface bundle yet.</p>
+      </header>
+      <p class="alch-callout">run <code>npm run build:cohort</code> after adding files under <code>cohort-data/program/</code>.</p>
+    `;
+    return;
+  }
+
+  const want = state.programPage || pages[0].record_id;
+  const current = pages.find(p => p.record_id === want) || pages[0];
+
+  const tabs = pages.map(p => `
+    <button class="alch-prog-tab" type="button"
+            data-program-page="${escAttr(p.record_id)}"
+            aria-selected="${p.record_id === current.record_id}">
+      <span class="alch-prog-tab-num">${escHtml(String(Number.isFinite(p.order) ? p.order : "·").padStart(2, "0"))}</span>
+      <span class="alch-prog-tab-label">${escHtml(p.title || p.record_id)}</span>
+    </button>
+  `).join("");
+
+  const bodyHtml = renderProgramMarkdown(current.body_md);
+  const editPath = `cohort-data/program/${current.record_id}.md`;
+  const editUrl = `https://github.com/dmarzzz/shape-rotator-field-guide/edit/main/${editPath}?quick_pull=1`;
+
+  state.canvas.innerHTML = `
+    <header class="alch-prog-head">
+      <h2 class="alch-prog-title">program</h2>
+      <p class="alch-prog-sub">the handbook. edits open a PR on github — stewards merge → next build:cohort ships the change to the cohort.</p>
+    </header>
+    <nav class="alch-prog-tabs" role="tablist" aria-label="program section">${tabs}</nav>
+    <article class="alch-prog-page">
+      <header class="alch-prog-page-head">
+        <h2 class="alch-prog-page-title">${escHtml(current.title || current.record_id)}</h2>
+        <button class="alch-feed-btn alch-prog-edit" type="button" data-edit-url="${escAttr(editUrl)}" title="opens github's web editor (PR-only)">
+          <span aria-hidden="true">✎</span>
+          <span>edit this page</span>
+        </button>
+      </header>
+      <div class="alch-prog-body">${bodyHtml}</div>
+      <footer class="alch-prog-page-foot">
+        <span class="alch-prog-aux">source:</span> <code>${escHtml(editPath)}</code>
+      </footer>
+    </article>
+  `;
+}
+
+function wireProgram() {
+  for (const btn of state.canvas.querySelectorAll(".alch-prog-tab[data-program-page]")) {
+    btn.addEventListener("click", () => {
+      state.programPage = btn.dataset.programPage;
+      render();
+    });
+  }
+  const editBtn = state.canvas.querySelector(".alch-prog-edit[data-edit-url]");
+  if (editBtn) {
+    editBtn.addEventListener("click", () => {
+      try { window.api?.openExternal?.(editBtn.dataset.editUrl); } catch {}
+    });
+  }
+  wireExternalLinks(state.canvas);
+}
+
+// ─── asks board ─────────────────────────────────────────────────────
+// Recurse pairing-bot + ETHGlobal #find-a-team pattern. Each ask is a
+// markdown file under cohort-data/asks/ with frontmatter {posted_at,
+// author, verb, topic, skill_areas, status}. Posts fade after 5 days
+// from posted_at (renderer-side filter; the underlying file stays so
+// the audit trail is preserved).
+//
+// Sensitivity: this surface intentionally has NO leaderboard, NO claim
+// count, NO "endorsement" mechanic, NO algorithm matching. Filter +
+// browse + open-the-author's-dm. See program/rules.md anti-patterns.
+
+const ASK_EXPIRY_DAYS = 5;
+
+function asksWithStatus() {
+  const all = (state.cohort?.asks || []).slice();
+  const todayMs = Date.now();
+  return all.map(a => {
+    const posted = isoToDate(a.posted_at);
+    const ageDays = posted ? Math.floor((todayMs - posted.getTime()) / 86400000) : 999;
+    const expired = ageDays >= ASK_EXPIRY_DAYS;
+    return { ...a, _ageDays: ageDays, _expired: expired };
+  }).sort((a, b) => {
+    // Open + recent first; expired drift to the bottom.
+    if (a._expired !== b._expired) return a._expired ? 1 : -1;
+    return (a._ageDays || 0) - (b._ageDays || 0);
+  });
+}
+
+function personByRecordId(rid) {
+  return (state.cohort?.people || []).find(p => p.record_id === rid) || null;
+}
+
+function dmLinkForPerson(p) {
+  // Preference order: telegram > x > website > github > email.
+  // Returns { label, url } or null.
+  if (!p) return null;
+  const L = p.links || {};
+  if (L.telegram) return { label: "telegram", url: L.telegram.startsWith("http") ? L.telegram : `https://t.me/${L.telegram.replace(/^@/, "")}` };
+  if (L.x)        return { label: "x / dm",   url: L.x.startsWith("http")        ? L.x        : `https://x.com/${L.x.replace(/^@/, "")}` };
+  if (L.github)   return { label: "github",   url: L.github.startsWith("http")   ? L.github   : `https://github.com/${L.github}` };
+  if (L.website)  return { label: "website",  url: L.website };
+  if (p.email)    return { label: "email",    url: `mailto:${p.email}` };
+  return null;
+}
+
+function renderAsks() {
+  const asks = asksWithStatus();
+  const me = state.profile?.user || {};
+  const myHandle = String(me.github || "").toLowerCase();
+  const myAuthorId = me.record_id || null;
+
+  if (asks.length === 0) {
+    state.canvas.innerHTML = `
+      <header class="alch-asks-head">
+        <h2 class="alch-asks-title">asks</h2>
+        <p class="alch-asks-sub">verb-first pair-requests. 5-day expiry. tap-to-claim opens the author's DM.</p>
+      </header>
+      <p class="alch-callout">no asks yet. <strong>post one</strong> by creating a markdown file under <code>cohort-data/asks/</code> via the same PR flow as your profile.</p>
+    `;
+    return;
+  }
+
+  const open    = asks.filter(a => !a._expired && (a.status || "open") === "open");
+  const claimed = asks.filter(a => !a._expired && a.status === "claimed");
+  const done    = asks.filter(a => !a._expired && a.status === "done");
+  const expired = asks.filter(a => a._expired);
+
+  const renderAsk = (a) => {
+    const author = personByRecordId(a.author);
+    const authorLabel = author ? (author.name || author.record_id) : a.author;
+    const dm = dmLinkForPerson(author);
+    const chips = (a.skill_areas || []).map(s => `<span class="alch-asks-chip">${escHtml(s)}</span>`).join("");
+    const isMine = (a.author === myAuthorId) || (author && String(author.links?.github || "").toLowerCase() === myHandle);
+    const ageLabel = a._ageDays === 0 ? "today"
+                   : a._ageDays === 1 ? "1 day ago"
+                   : `${a._ageDays} days ago`;
+    const statusBadge = a.status === "claimed" ? `<span class="alch-asks-status alch-asks-status-claimed">claimed</span>`
+                      : a.status === "done"    ? `<span class="alch-asks-status alch-asks-status-done">done</span>`
+                      : "";
+    const action = isMine
+      ? `<a class="alch-asks-action alch-asks-action-edit" data-asks-edit="${escAttr(a.record_id)}" href="#">edit</a>`
+      : (dm
+          ? `<a class="alch-asks-action" data-external href="${escAttr(dm.url)}">${escHtml(dm.label)} →</a>`
+          : `<span class="alch-asks-action alch-asks-action-disabled">no contact link on author</span>`);
+    return `
+      <article class="alch-asks-card" data-expired="${a._expired ? "1" : "0"}">
+        <div class="alch-asks-verb">${escHtml(a.verb || "·")}</div>
+        <div class="alch-asks-body">
+          <div class="alch-asks-topic">${escHtml(a.topic || "")}</div>
+          <div class="alch-asks-meta">
+            <span class="alch-asks-author">${escHtml(authorLabel)}</span>
+            <span class="alch-asks-sep">·</span>
+            <span class="alch-asks-when">${escHtml(ageLabel)}</span>
+            ${statusBadge}
+          </div>
+          ${chips ? `<div class="alch-asks-chips">${chips}</div>` : ""}
+        </div>
+        <div class="alch-asks-actions">${action}</div>
+      </article>
+    `;
+  };
+
+  const section = (title, list, extraNote = "") => list.length === 0 ? "" : `
+    <section class="alch-asks-section">
+      <header class="alch-asks-section-head">
+        <h3 class="alch-asks-section-title">${escHtml(title)}</h3>
+        <span class="alch-asks-section-count">${list.length}</span>
+        ${extraNote ? `<span class="alch-asks-section-note">${escHtml(extraNote)}</span>` : ""}
+      </header>
+      <div class="alch-asks-list">${list.map(renderAsk).join("")}</div>
+    </section>
+  `;
+
+  // New-ask handoff: same /new/ URL pattern as profile records. We
+  // pre-fill enough that the user only has to fill `topic` + verb.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const authorSlug = myAuthorId || (myHandle ? myHandle : "your-slug");
+  const askTemplate = `---
+record_id: ${authorSlug}-${todayIso}
+record_type: ask
+posted_at: ${todayIso}
+author: ${authorSlug}
+verb: "🤝 pair on"
+topic: ""
+skill_areas: []
+status: open
+---
+
+(optional body — extra context for the ask.)
+`;
+  const newUrl = `https://github.com/dmarzzz/shape-rotator-field-guide/new/cohort-enrichment-mega-pr` +
+    `?filename=${encodeURIComponent(`cohort-data/asks/${authorSlug}-${todayIso}.md`)}` +
+    `&value=${encodeURIComponent(askTemplate)}` +
+    `&quick_pull=1`;
+
+  state.canvas.innerHTML = `
+    <header class="alch-asks-head">
+      <h2 class="alch-asks-title">asks</h2>
+      <p class="alch-asks-sub">verb-first pair-requests · 5-day expiry · tap-to-claim opens the author's DM</p>
+      <div class="alch-asks-head-actions">
+        <button class="alch-feed-btn alch-asks-new" type="button" data-asks-new-url="${escAttr(newUrl)}">
+          <span aria-hidden="true">+</span><span>post an ask</span>
+        </button>
+      </div>
+    </header>
+
+    ${section("open", open)}
+    ${section("claimed", claimed, "in flight")}
+    ${section("done", done, "wrap-up only")}
+    ${section("fading", expired, "past the 5-day window")}
+
+    <p class="alch-callout"><strong>asks · v0.1</strong><br/>
+    posts are markdown under <code>cohort-data/asks/</code>. expiry is renderer-side — files stay so the audit trail is preserved. no claim count, no leaderboard, no algorithm. filter + browse + DM. see <button class="alch-link-btn" data-go="program" data-program-page="rules">program · rules</button> for the anti-patterns we left out.</p>
+  `;
+}
+
+function wireAsks() {
+  for (const btn of state.canvas.querySelectorAll(".alch-asks-new[data-asks-new-url]")) {
+    btn.addEventListener("click", () => {
+      try { window.api?.openExternal?.(btn.dataset.asksNewUrl); } catch {}
+    });
+  }
+  for (const a of state.canvas.querySelectorAll(".alch-asks-action[data-asks-edit]")) {
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      const slug = a.dataset.asksEdit;
+      const url = `https://github.com/dmarzzz/shape-rotator-field-guide/edit/cohort-enrichment-mega-pr/cohort-data/asks/${encodeURIComponent(slug)}.md?quick_pull=1`;
+      try { window.api?.openExternal?.(url); } catch {}
+    });
+  }
+  // Inline jump to program → rules from the callout.
+  for (const b of state.canvas.querySelectorAll(".alch-link-btn[data-go='program']")) {
+    b.addEventListener("click", () => {
+      state.mode = "program";
+      state.programPage = b.dataset.programPage || null;
+      try { localStorage.setItem(ALCHEMY_LS_KEY, "program"); } catch {}
+      syncRailSelection();
+      render();
+    });
+  }
+  wireExternalLinks(state.canvas);
+}
+
+// ─── topic atlas ────────────────────────────────────────────────────
+// Force-directed bubble cluster of `skill_areas` tags across teams +
+// people. Bubble size = number of cohort members carrying the tag.
+// Adjacency = co-occurrence on the same record. Click bubble → reveal
+// the teams + people that carry it.
+//
+// Layout: simple custom force iteration on canvas. ~25 nodes; no need
+// for a real graph library. The deterministic seed-based init keeps
+// the layout stable across renders.
+
+function aggregateSkillAreas() {
+  const cohort = state.cohort || {};
+  const tagsToTeams = new Map();   // tag → Set(team_record_id)
+  const tagsToPeople = new Map();  // tag → Set(person_record_id)
+  const teamPairs = new Map();     // "tagA::tagB" → count (for adjacency)
+
+  const consume = (areas, kind, id) => {
+    const uniq = Array.from(new Set((areas || []).filter(Boolean)));
+    for (const t of uniq) {
+      const tn = String(t).trim().toLowerCase();
+      if (!tn) continue;
+      if (kind === "team") {
+        if (!tagsToTeams.has(tn)) tagsToTeams.set(tn, new Set());
+        tagsToTeams.get(tn).add(id);
+      } else {
+        if (!tagsToPeople.has(tn)) tagsToPeople.set(tn, new Set());
+        tagsToPeople.get(tn).add(id);
+      }
+    }
+    for (let i = 0; i < uniq.length; i++) {
+      for (let j = i + 1; j < uniq.length; j++) {
+        const a = String(uniq[i]).trim().toLowerCase();
+        const b = String(uniq[j]).trim().toLowerCase();
+        if (!a || !b || a === b) continue;
+        const key = a < b ? `${a}::${b}` : `${b}::${a}`;
+        teamPairs.set(key, (teamPairs.get(key) || 0) + 1);
+      }
+    }
+  };
+  for (const t of cohort.teams || []) consume(t.skill_areas, "team", t.record_id);
+  for (const p of cohort.people || []) consume(p.skill_areas, "person", p.record_id);
+
+  const allTags = new Set([...tagsToTeams.keys(), ...tagsToPeople.keys()]);
+  const nodes = Array.from(allTags).map(tag => {
+    const teams = Array.from(tagsToTeams.get(tag) || []);
+    const people = Array.from(tagsToPeople.get(tag) || []);
+    return {
+      tag,
+      teams,
+      people,
+      size: teams.length + people.length,
+    };
+  }).sort((a, b) => b.size - a.size);
+
+  const edges = Array.from(teamPairs.entries()).map(([k, v]) => {
+    const [a, b] = k.split("::");
+    return { a, b, weight: v };
+  });
+  return { nodes, edges };
+}
+
+// Deterministic seeded RNG so the layout is stable across renders.
+function mulberry32(seed) {
+  let t = seed >>> 0;
+  return function() {
+    t = (t + 0x6D2B79F5) >>> 0;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function layoutAtlas(nodes, edges, w, h) {
+  if (nodes.length === 0) return [];
+  const rand = mulberry32(0xC0FFEE);
+  // Bubble radius scales with sqrt(size); min/max clamped.
+  const maxSize = Math.max(...nodes.map(n => n.size), 1);
+  const rOf = (n) => Math.max(14, Math.min(56, 14 + 36 * Math.sqrt(n.size / maxSize)));
+  const pts = nodes.map((n) => ({
+    ...n,
+    r: rOf(n),
+    x: w / 2 + (rand() - 0.5) * w * 0.6,
+    y: h / 2 + (rand() - 0.5) * h * 0.6,
+    vx: 0, vy: 0,
+  }));
+  const idx = new Map(pts.map((p, i) => [p.tag, i]));
+
+  // Run a fixed number of force iterations. O(n^2) repulsion + attraction
+  // along edges + centering. n ≤ 25 so this is sub-millisecond.
+  const ITERS = 240;
+  for (let step = 0; step < ITERS; step++) {
+    const alpha = 1 - step / ITERS;
+    // Repulsion
+    for (let i = 0; i < pts.length; i++) {
+      for (let j = i + 1; j < pts.length; j++) {
+        const a = pts[i], b = pts[j];
+        let dx = a.x - b.x, dy = a.y - b.y;
+        let d2 = dx * dx + dy * dy;
+        const minD = a.r + b.r + 14;
+        if (d2 < 0.0001) { dx = (rand() - 0.5); dy = (rand() - 0.5); d2 = 1; }
+        const d = Math.sqrt(d2);
+        const overlap = Math.max(0, minD - d);
+        const force = (1500 / Math.max(d2, 100)) + overlap * 1.4;
+        const fx = (dx / d) * force * alpha;
+        const fy = (dy / d) * force * alpha;
+        a.vx += fx; a.vy += fy;
+        b.vx -= fx; b.vy -= fy;
+      }
+    }
+    // Attraction along edges (weighted)
+    for (const e of edges) {
+      const ai = idx.get(e.a), bi = idx.get(e.b);
+      if (ai == null || bi == null) continue;
+      const a = pts[ai], b = pts[bi];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1;
+      const target = (a.r + b.r) * 1.6;
+      const stretch = d - target;
+      const force = stretch * 0.012 * Math.min(e.weight, 4) * alpha;
+      const fx = (dx / d) * force, fy = (dy / d) * force;
+      a.vx += fx; a.vy += fy;
+      b.vx -= fx; b.vy -= fy;
+    }
+    // Centering
+    for (const p of pts) {
+      p.vx += (w / 2 - p.x) * 0.005 * alpha;
+      p.vy += (h / 2 - p.y) * 0.005 * alpha;
+      p.x += p.vx; p.y += p.vy;
+      p.vx *= 0.82; p.vy *= 0.82;
+      // Clamp to viewport.
+      p.x = Math.max(p.r + 6, Math.min(w - p.r - 6, p.x));
+      p.y = Math.max(p.r + 6, Math.min(h - p.r - 6, p.y));
+    }
+  }
+  return pts;
+}
+
+function renderAtlas() {
+  const { nodes, edges } = aggregateSkillAreas();
+  const teams = state.cohort?.teams || [];
+  const people = state.cohort?.people || [];
+  const totalTeams = teams.length;
+  const totalPeople = people.length;
+  const W = 880, H = 520;
+
+  if (nodes.length === 0) {
+    state.canvas.innerHTML = `
+      <header class="alch-atlas-head">
+        <h2 class="alch-atlas-title">atlas</h2>
+        <p class="alch-atlas-sub">skill_areas tags across the cohort.</p>
+      </header>
+      <p class="alch-callout">no tagged records yet. add <code>skill_areas</code> to your team or person record via the profile editor; this view reads from the merged cohort surface.</p>
+    `;
+    return;
+  }
+
+  const laid = layoutAtlas(nodes, edges, W, H);
+  const active = state.atlasFocus || null;
+  const activeNode = active ? laid.find(n => n.tag === active) : null;
+  // Edges with end points after layout, filtered to a sensible top set
+  // (the strongest co-occurrences) so the canvas isn't a hairball.
+  const TOP_EDGES = 24;
+  const drawableEdges = edges
+    .map(e => ({ ...e, _a: laid.find(p => p.tag === e.a), _b: laid.find(p => p.tag === e.b) }))
+    .filter(e => e._a && e._b)
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, TOP_EDGES);
+
+  const edgeSvg = drawableEdges.map(e => {
+    const dim = active && active !== e.a && active !== e.b ? 0.08 : 0.30;
+    return `<line x1="${e._a.x.toFixed(1)}" y1="${e._a.y.toFixed(1)}" x2="${e._b.x.toFixed(1)}" y2="${e._b.y.toFixed(1)}" stroke="rgba(245,243,238,${dim})" stroke-width="${Math.min(2.5, 0.6 + e.weight * 0.3).toFixed(2)}" />`;
+  }).join("");
+
+  const nodeSvg = laid.map(n => {
+    const dim = active ? (n.tag === active ? 1 : 0.32) : 1;
+    const fill = n.tag === active ? "#c44025" : "rgba(193,168,114,0.55)";
+    const stroke = n.tag === active ? "#c44025" : "rgba(245,243,238,0.55)";
+    const label = n.tag.length > 16 ? n.tag.slice(0, 15) + "…" : n.tag;
+    return `
+      <g class="alch-atlas-node" data-atlas-tag="${escAttr(n.tag)}" opacity="${dim}" style="cursor:pointer;">
+        <circle cx="${n.x.toFixed(1)}" cy="${n.y.toFixed(1)}" r="${n.r.toFixed(1)}" fill="${fill}" fill-opacity="0.18" stroke="${stroke}" stroke-width="1.2" />
+        <text x="${n.x.toFixed(1)}" y="${(n.y + 3).toFixed(1)}" text-anchor="middle" font-family="var(--ed-mono, ui-monospace, monospace)" font-size="${Math.max(10, Math.min(13, n.r / 3.5)).toFixed(1)}" fill="rgba(245,243,238,0.92)" style="letter-spacing:0.04em;">${escHtml(label)}</text>
+        <text x="${n.x.toFixed(1)}" y="${(n.y + n.r + 14).toFixed(1)}" text-anchor="middle" font-family="var(--ed-mono, ui-monospace, monospace)" font-size="9.5" fill="rgba(245,243,238,0.55)" style="letter-spacing:0.16em;">${n.size}</text>
+      </g>
+    `;
+  }).join("");
+
+  // Side panel — when a tag is focused, list its teams + people.
+  let panel = "";
+  if (activeNode) {
+    const tList = (activeNode.teams || []).map(rid => {
+      const t = teams.find(x => x.record_id === rid);
+      return `<li class="alch-atlas-li" data-atlas-go-team="${escAttr(rid)}">${escHtml(t?.name || rid)}</li>`;
+    }).join("");
+    const pList = (activeNode.people || []).map(rid => {
+      const p = people.find(x => x.record_id === rid);
+      return `<li class="alch-atlas-li" data-atlas-go-person="${escAttr(rid)}">${escHtml(p?.name || rid)}</li>`;
+    }).join("");
+    panel = `
+      <aside class="alch-atlas-panel">
+        <header class="alch-atlas-panel-head">
+          <h3 class="alch-atlas-panel-title">${escHtml(activeNode.tag)}</h3>
+          <span class="alch-atlas-panel-count">${activeNode.size}</span>
+          <button class="alch-atlas-panel-x" type="button" data-atlas-clear="1" aria-label="clear focus">×</button>
+        </header>
+        ${tList ? `<section class="alch-atlas-panel-section"><h4 class="alch-atlas-panel-h">teams (${activeNode.teams.length})</h4><ul class="alch-atlas-ul">${tList}</ul></section>` : ""}
+        ${pList ? `<section class="alch-atlas-panel-section"><h4 class="alch-atlas-panel-h">people (${activeNode.people.length})</h4><ul class="alch-atlas-ul">${pList}</ul></section>` : ""}
+      </aside>
+    `;
+  }
+
+  state.canvas.innerHTML = `
+    <header class="alch-atlas-head">
+      <h2 class="alch-atlas-title">atlas</h2>
+      <p class="alch-atlas-sub">${nodes.length} skill_areas tags · ${totalTeams} teams · ${totalPeople} people · bubble size = members carrying the tag · click a bubble to inspect</p>
+    </header>
+    <div class="alch-atlas-stage" data-active="${active ? "1" : "0"}">
+      <svg class="alch-atlas-svg" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet">
+        <g class="alch-atlas-edges">${edgeSvg}</g>
+        <g class="alch-atlas-nodes">${nodeSvg}</g>
+      </svg>
+      ${panel}
+    </div>
+    <p class="alch-callout"><strong>atlas · v0.1</strong><br/>
+    flat folksonomy of the cohort's controlled-vocab skill_areas. no proficiency, no ranking — just adjacency. populated from every team's + person's record. add a tag to your record via <button class="alch-link-btn" data-go="profile">profile</button> and it shows up here on the next build.</p>
+  `;
+}
+
+function wireAtlas() {
+  for (const g of state.canvas.querySelectorAll(".alch-atlas-node[data-atlas-tag]")) {
+    g.addEventListener("click", () => {
+      const tag = g.dataset.atlasTag;
+      state.atlasFocus = (state.atlasFocus === tag) ? null : tag;
+      render();
+    });
+  }
+  const clr = state.canvas.querySelector("[data-atlas-clear]");
+  if (clr) clr.addEventListener("click", () => { state.atlasFocus = null; render(); });
+  for (const li of state.canvas.querySelectorAll("[data-atlas-go-team]")) {
+    li.addEventListener("click", () => openDetail(li.dataset.atlasGoTeam));
+  }
+  for (const li of state.canvas.querySelectorAll("[data-atlas-go-person]")) {
+    li.addEventListener("click", () => openDetail(li.dataset.atlasGoPerson));
+  }
+  for (const b of state.canvas.querySelectorAll(".alch-link-btn[data-go='profile']")) {
+    b.addEventListener("click", () => {
+      state.mode = "profile";
+      try { localStorage.setItem(ALCHEMY_LS_KEY, "profile"); } catch {}
+      syncRailSelection();
+      render();
+    });
+  }
 }
 
 // ── Dossier export — multi-card PNG of all teams + projects ─────────
@@ -1760,7 +2050,7 @@ function renderTeamDetail(team) {
   const teamPeople = (state.cohort.people || []).filter(p => p.team === recordId);
 
   const linksRow = renderDetailLinks(team.links || {});
-  const editUrl = `https://github.com/dmarzzz/shape-rotator-field-guide/edit/main/cohort-data/teams/${encodeURIComponent(recordId)}.md?quick_pull=1`;
+  const editUrl = buildEditPRUrl({ recordType: "team", recordId });
 
   state.canvas.innerHTML = `
     <header class="alch-detail-bar">
@@ -1857,7 +2147,7 @@ function renderPersonDetail(person) {
     .map(id => (state.cohort?.teams || []).find(t => t.record_id === id))
     .filter(Boolean);
   const linksRow = renderDetailLinks(person.links || {});
-  const editUrl = `https://github.com/dmarzzz/shape-rotator-field-guide/edit/main/cohort-data/people/${encodeURIComponent(recordId)}.md?quick_pull=1`;
+  const editUrl = buildEditPRUrl({ recordType: "person", recordId });
   const datesLine = (person.dates_start || person.dates_end)
     ? `${escHtml(person.dates_start || "—")} → ${escHtml(person.dates_end || "—")}`
     : "—";
@@ -2473,6 +2763,12 @@ function wireFeedInteractions() {
 }
 
 // ─── profile renderer ────────────────────────────────────────────────
+// TODO: extract this whole block into @shape-rotator/shape-ui
+// (profile-form.js currently ships a minimal single-record edit form
+// for the sibling web app, but the full add/edit/diff/markdown-gen
+// flow below stays here because it's wired into state.profile,
+// cohort-relative pickers, and steward-merge expectations that are
+// out of scope for the web app today). Convergence work is Phase 2.
 // Two editing modes:
 //   • team   — pick an existing team, edit its surface fields. Submit
 //              opens github's /edit/ URL + shows a diff panel since
@@ -2508,19 +2804,30 @@ function teamFieldsFor(kind) {
     { key: "links.x",         label: "x / twitter",     type: "text",     placeholder: "@handle" },
     { key: "links.demo",      label: "demo",            type: "url",      placeholder: "video / loom / drive" },
     { key: "links.deck",      label: "deck",            type: "url",      placeholder: "https://…" },
+    // Program-track fields — set in week-1 office hours per the agenda.
+    { key: "success_dimensions", label: "success dimensions", type: "text",     placeholder: "productization, research_lineage, collaborative — pick any subset" },
+    { key: "graduation_target",  label: "graduation target",  type: "textarea", placeholder: "what 'graduating well' looks like for this project" },
+    { key: "monthly_milestones", label: "monthly milestones", type: "textarea", placeholder: "rough month-by-month checkpoints (one per line)" },
+    { key: "weekly_goals",       label: "this week's goals",  type: "textarea", placeholder: "concrete goal(s) for this week — refresh on monday" },
   ];
 }
 
 const PERSON_EDITABLE_FIELDS = [
-  { key: "name",            label: "name",            type: "text",     placeholder: "your name" },
-  { key: "team",            label: "team",            type: "team-select" },
-  { key: "role",            label: "role",            type: "text",     placeholder: "what you do on the team" },
-  { key: "geo",             label: "geo",             type: "text",     placeholder: "NYC, etc." },
-  { key: "domain",          label: "domain",          type: "select",   options: ["crypto", "tee", "ai", "app-ux", "bd-gtm", "design"] },
-  { key: "links.github",    label: "github",          type: "text",     placeholder: "username" },
-  { key: "links.x",         label: "x / twitter",     type: "text",     placeholder: "@handle" },
-  { key: "links.website",   label: "website",         type: "url",      placeholder: "https://…" },
-  { key: "links.linkedin",  label: "linkedin",        type: "text",     placeholder: "username" },
+  { key: "name",                label: "name",                type: "text",     placeholder: "your name" },
+  { key: "team",                label: "team",                type: "team-select" },
+  { key: "role",                label: "role",                type: "text",     placeholder: "what you do on the team" },
+  { key: "geo",                 label: "geo",                 type: "text",     placeholder: "NYC, etc." },
+  { key: "domain",              label: "domain",              type: "select",   options: ["crypto", "tee", "ai", "app-ux", "bd-gtm", "design"] },
+  { key: "links.github",        label: "github",              type: "text",     placeholder: "username" },
+  { key: "links.x",             label: "x / twitter",         type: "text",     placeholder: "@handle" },
+  { key: "links.website",       label: "website",             type: "url",      placeholder: "https://…" },
+  { key: "links.linkedin",      label: "linkedin",            type: "text",     placeholder: "username" },
+  // Personal-API fields. Free-text, all optional; surfaced in the onboarding
+  // walkthrough + person dossier so the cohort can collaborate well.
+  { key: "comm_style",          label: "comm style",          type: "textarea", placeholder: "sync vs async, DM vs issue, fastest path to reach you" },
+  { key: "contribute_interests",label: "contribute interests",type: "textarea", placeholder: "what you'd happily pair on for other people's projects" },
+  { key: "availability_pref",   label: "availability rhythm", type: "textarea", placeholder: "heads-down hours, no-meet days, time zone notes" },
+  { key: "weekly_intention",    label: "this week's intention", type: "textarea", placeholder: "one concrete thing you want to ship or learn this week" },
 ];
 
 function getNested(obj, path) {
@@ -2735,10 +3042,13 @@ function renderEditorForm(fields, draft, ctx) {
         .concat((ctx.teams || []).map(t => `<option value="${escHtml(t.record_id)}" ${value === t.record_id ? "selected" : ""}>${escHtml(t.name)} · ${escHtml(t.record_id)}</option>`))
         .join("");
       input = `<select name="${escAttr(f.key)}">${teamOpts}</select>`;
+    } else if (f.type === "textarea") {
+      input = `<textarea name="${escAttr(f.key)}" rows="3" placeholder="${escAttr(f.placeholder || "")}">${escHtml(display)}</textarea>`;
     } else {
       input = `<input type="${f.type}" name="${escAttr(f.key)}" value="${escAttr(display)}" placeholder="${escAttr(f.placeholder || "")}" />`;
     }
-    return `<label class="alch-pf-row"><span>${escHtml(f.label)}</span>${input}</label>`;
+    const rowCls = (f.type === "textarea") ? "alch-pf-row alch-pf-row-wide" : "alch-pf-row";
+    return `<label class="${rowCls}"><span>${escHtml(f.label)}</span>${input}</label>`;
   }).join("");
   return `<form id="alch-pf-edit-form" class="alch-profile-form" autocomplete="off">${rows}</form>`;
 }
@@ -2879,6 +3189,23 @@ function quoteYaml(s) {
   return `"${String(s ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+// Emit a YAML scalar — quoted on a single line for short strings, or as a
+// literal block (`|`) for anything containing a newline. `indent` is the
+// number of spaces a continuation line should sit at (the key's column
+// + 2). Used for textarea-backed fields like weekly_goals, monthly_milestones,
+// and the personal-API fields where multiline content matters.
+function yamlScalar(value, indent = 2) {
+  if (value == null || value === "") return "null";
+  const s = String(value);
+  if (!/\n/.test(s)) return quoteYaml(s);
+  const pad = " ".repeat(indent);
+  // Strip trailing whitespace; rejoin with leading indent. Block-scalar
+  // `|` preserves newlines verbatim; we don't strip blank lines because
+  // they may be load-bearing in the user's prose.
+  const lines = s.replace(/\s+$/, "").split(/\r?\n/).map(l => pad + l);
+  return `|\n${lines.join("\n")}`;
+}
+
 // Build the full markdown content for a NEW team or project record.
 // Both share the team-shaped frontmatter; `kind` discriminates them.
 function buildTeamMarkdown(draft, slug, kind) {
@@ -2911,6 +3238,10 @@ ${linksBlock}
 paper_basis: ${draft.paper_basis ? quoteYaml(draft.paper_basis) : "null"}
 traction: ${draft.traction ? quoteYaml(draft.traction) : "null"}
 hackathon_note: ${draft.hackathon_note ? quoteYaml(draft.hackathon_note) : "null"}
+success_dimensions: ${yamlScalar(draft.success_dimensions)}
+graduation_target: ${yamlScalar(draft.graduation_target)}
+monthly_milestones: ${yamlScalar(draft.monthly_milestones)}
+weekly_goals: ${yamlScalar(draft.weekly_goals)}
 ---
 
 ## about
@@ -2939,6 +3270,10 @@ role: ${quoteYaml(draft.role || "")}
 geo: ${quoteYaml(draft.geo || "")}
 domain: ${draft.domain || "null"}
 ${linksBlock}
+comm_style: ${yamlScalar(draft.comm_style)}
+contribute_interests: ${yamlScalar(draft.contribute_interests)}
+availability_pref: ${yamlScalar(draft.availability_pref)}
+weekly_intention: ${yamlScalar(draft.weekly_intention)}
 ---
 
 ## bio
@@ -2981,22 +3316,24 @@ function buildYamlPatch(diff) {
   }
   const lines = [];
   for (const [k, v] of Object.entries(flat)) {
-    lines.push(`${k}: ${formatYamlValue(v)}`);
+    // Top-level key — block-scalar continuation indents 2 spaces.
+    lines.push(`${k}: ${formatYamlValue(v, 2)}`);
   }
   for (const [parent, kids] of Object.entries(nested)) {
     lines.push(`${parent}:`);
     for (const [k, v] of Object.entries(kids)) {
-      lines.push(`  ${k}: ${formatYamlValue(v)}`);
+      // Nested under `parent:` — continuation indents 4 spaces.
+      lines.push(`  ${k}: ${formatYamlValue(v, 4)}`);
     }
   }
   return lines.join("\n");
 }
-function formatYamlValue(v) {
+function formatYamlValue(v, indent = 2) {
   if (v == null || v === "") return "null";
   if (typeof v === "number") return String(v);
   if (typeof v === "boolean") return String(v);
-  // String. Quote it.
-  return quoteYaml(v);
+  // String. Multiline → block scalar; single-line → quoted.
+  return yamlScalar(v, indent);
 }
 
 function submitEditAsPR() {
@@ -3118,7 +3455,5 @@ function formatDiffValue(v) {
   return String(v);
 }
 
-function escAttr(s) {
-  return escHtml(s).replace(/"/g, "&quot;");
-}
+// escAttr lives in @shape-rotator/shape-ui now (imported at the top).
 

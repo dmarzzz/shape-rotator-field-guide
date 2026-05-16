@@ -23,14 +23,17 @@ let _refreshTimer = null;
 const _subscribers = new Set();
 
 function emptyShape() {
-  return { teams: [], people: [], clusters: [] };
+  return { teams: [], people: [], clusters: [], program: [], asks: [], cohort_vocab: {} };
 }
 
 function normalize(data) {
   return {
-    teams:    Array.isArray(data?.teams)    ? data.teams    : [],
-    people:   Array.isArray(data?.people)   ? data.people   : [],
-    clusters: Array.isArray(data?.clusters) ? data.clusters : [],
+    teams:        Array.isArray(data?.teams)    ? data.teams    : [],
+    people:       Array.isArray(data?.people)   ? data.people   : [],
+    clusters:     Array.isArray(data?.clusters) ? data.clusters : [],
+    program:      Array.isArray(data?.program)  ? data.program  : [],
+    asks:         Array.isArray(data?.asks)     ? data.asks     : [],
+    cohort_vocab: (data?.cohort_vocab && typeof data.cohort_vocab === "object") ? data.cohort_vocab : {},
   };
 }
 
@@ -55,7 +58,14 @@ async function loadFromFixture() {
 // data (the usual case between merges).
 function signatureOf(grouped) {
   const sig = (arr) => arr.map(r => r.record_id).sort().join("|");
-  return `${grouped.teams.length}:${sig(grouped.teams)}#${grouped.people.length}:${sig(grouped.people)}#${grouped.clusters.length}:${sig(grouped.clusters)}`;
+  // Program-page edits are full-body markdown swaps, not record_id churn —
+  // hash a coarse fingerprint of (id + body length) so a content-only change
+  // still trips the refresh notifier.
+  const progSig = (arr) => arr.map(r => `${r.record_id}:${(r.body_md || "").length}`).sort().join("|");
+  // Asks churn fast (5-day expiry) — include status in the signature so the
+  // wall re-renders on claim/close.
+  const askSig = (arr) => arr.map(r => `${r.record_id}:${r.status || "open"}`).sort().join("|");
+  return `${grouped.teams.length}:${sig(grouped.teams)}#${grouped.people.length}:${sig(grouped.people)}#${grouped.clusters.length}:${sig(grouped.clusters)}#${grouped.program.length}:${progSig(grouped.program)}#${grouped.asks.length}:${askSig(grouped.asks)}`;
 }
 
 /**
