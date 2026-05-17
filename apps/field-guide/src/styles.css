@@ -9739,3 +9739,46 @@ textarea.alch-asks-compose-input { resize: vertical; min-height: 74px; }
   transition: background 200ms ease;
 }
 .alchemy-rail-btn[aria-selected="true"]::before { background: var(--sr-red); }
+
+/* ── this-week dateline — confirms the app knows the date ─────────── */
+.cal-tw-dateline {
+  display: flex; align-items: baseline; gap: 14px;
+  padding-bottom: 14px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid rgba(245,243,238,0.10);
+}
+.cal-tw-dateline-stamp {
+  font-family: var(--sr-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--sr-red);
+  padding: 3px 9px;
+  border: 1px solid var(--sr-red);
+  border-radius: 2px;
+  line-height: 1;
+}
+.cal-tw-dateline-day {
+  font-family: var(--sr-font-sans);
+  font-style: italic;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  color: var(--ed-ink-1, #f5f3ee);
+}
+
+/* ── feed group rollup tail ───────────────────────────────────────── */
+.alch-feed-tail {
+  margin-top: 6px;
+  font-family: var(--sr-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: lowercase;
+  color: var(--ed-ink-1, #f5f3ee);
+  opacity: 0.55;
+}
+.alch-feed-group {
+  /* slightly more breathing inside grouped cards since they show
+     headline + summary + tail instead of one terse line */
+  padding-top: 14px;
+  padding-bottom: 14px;
+}

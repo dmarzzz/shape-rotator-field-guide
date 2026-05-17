@@ -872,6 +872,17 @@ function renderCalThisWeek() {
   // ISO week label — "week of mon may 18"
   const weekStartIso = new Date(weekStart).toISOString().slice(0, 10);
   const weekLabel = fmtKeyDate(weekStartIso);
+  // "Today is <day>" — date the app actually thinks it is, from the
+  // system clock. Surfaced prominently so the user can confirm at a
+  // glance that the today/up-next sections are computed against the
+  // real current date and not some hardcoded stub.
+  const nowDate = new Date();
+  const todayHumanLong = nowDate.toLocaleDateString("en-US", {
+    weekday: "long", month: "long", day: "numeric", year: "numeric",
+  });
+  const todayHumanShort = nowDate.toLocaleDateString("en-US", {
+    weekday: "short", month: "short", day: "numeric",
+  }).toLowerCase();
 
   const todayHtml = today.length
     ? `<section class="cal-tw-today">
@@ -913,7 +924,11 @@ function renderCalThisWeek() {
   return `
     <div class="cal-tw-wrap">
       <div class="cal-tw-main">
-        <div class="cal-tw-weeklabel">${escHtml(weekLabel)} → +6 days</div>
+        <div class="cal-tw-dateline">
+          <span class="cal-tw-dateline-stamp">today</span>
+          <span class="cal-tw-dateline-day">${escHtml(todayHumanLong)}</span>
+        </div>
+        <div class="cal-tw-weeklabel">week of ${escHtml(weekLabel)} → +6 days</div>
         ${todayHtml}
         ${weekHtml}
         ${upNextHtml}
@@ -3424,17 +3439,138 @@ function renderFeed() {
       </div>
     `;
   } else {
-    body = `<ul class="alch-feed-list">${items.map(renderFeedItem).join("")}</ul>`;
+    // Roll the flat event list up to one card per actor (person ↦ team
+    // ↦ raw gh login). Stops the feed from being 100 lines of "vaishnavi
+    // pushed 1 commit" — one card with the latest event + a "+N more"
+    // tail is easier to scan.
+    const groups = groupFeedItemsByActor(items);
+    body = `<ul class="alch-feed-list">${groups.map(renderFeedGroup).join("")}</ul>`;
     body += `
-      <p class="alch-callout"><strong>feed · v0.1</strong><br/>
-      Github events from your registered repos. Transcripts join the feed once swf-node's
-      hivemind sink lands (issue #93). Add or remove repos in the <strong>profile</strong> tab.</p>
+      <p class="alch-callout"><strong>feed · v0.2</strong><br/>
+      One card per person/team — the latest event headlines, a "+N more" tail counts the rest. Click a card to open the latest event on github. Sources: team repos + every cohort member's public github activity. Refreshed every 12 min in the background.</p>
     `;
   }
   state.canvas.innerHTML = head + body;
   paintFeedMeta();
 }
 
+// Group flat event list by actor identity: cohort person record ↦ cohort
+// team ↦ raw github login. Each group: the latest event becomes the
+// headline; everything else under the same key counts toward the "+N more"
+// suffix. Result sorted by group's most-recent event.
+function groupFeedItemsByActor(events) {
+  const groups = new Map();
+  for (const ev of events) {
+    const key = ev.person_id
+      ? `p:${ev.person_id}`
+      : ev.team_id
+        ? `t:${ev.team_id}`
+        : `a:${(ev.actor || ev.repo || "?").toLowerCase()}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        key,
+        kind: ev.person_id ? "person" : ev.team_id ? "team" : "actor",
+        person_id: ev.person_id || null,
+        team_id: ev.team_id || null,
+        actor: ev.actor || "",
+        latest: ev,
+        count: 0,
+        types: new Map(),
+      };
+      groups.set(key, g);
+    }
+    g.count++;
+    if ((ev.at_ms || 0) > (g.latest.at_ms || 0)) g.latest = ev;
+    g.types.set(ev.type, (g.types.get(ev.type) || 0) + 1);
+  }
+  return Array.from(groups.values()).sort(
+    (a, b) => (b.latest.at_ms || 0) - (a.latest.at_ms || 0)
+  );
+}
+
+// Headline derivation: prefer the cohort person's name, else cohort team
+// name, else raw gh actor. Returns { primary, secondary } for two-line
+// layout (primary = bold name, secondary = team/repo context line).
+function feedGroupHeadline(g) {
+  const ev = g.latest;
+  let primary = "";
+  let secondary = "";
+  if (g.person_id) {
+    const p = (state.cohort?.people || []).find(x => x.record_id === g.person_id);
+    primary = p?.name || g.actor || g.person_id;
+    if (ev.team_id) {
+      const t = teamLabel(ev.team_id);
+      if (t && t !== "—") secondary = t;
+    }
+    if (!secondary && ev.repo) secondary = ev.repo;
+  } else if (g.team_id) {
+    primary = teamLabel(g.team_id);
+    secondary = g.actor ? `@${g.actor}` : (ev.repo || "");
+  } else {
+    primary = g.actor || ev.repo || "—";
+    secondary = ev.repo || "";
+  }
+  return { primary, secondary };
+}
+
+// Short tail summarising the rest of the group's activity by event type.
+// E.g. counts {PushEvent: 3, PullRequestEvent: 2} → "3 pushes · 2 PRs"
+function feedGroupTail(g) {
+  if (g.count <= 1) return "";
+  const labels = {
+    PushEvent:              { one: "push",    many: "pushes" },
+    PullRequestEvent:       { one: "PR",      many: "PRs" },
+    PullRequestReviewEvent: { one: "review",  many: "reviews" },
+    IssuesEvent:            { one: "issue",   many: "issues" },
+    IssueCommentEvent:      { one: "comment", many: "comments" },
+    CreateEvent:            { one: "create",  many: "creates" },
+    DeleteEvent:            { one: "delete",  many: "deletes" },
+    ReleaseEvent:           { one: "release", many: "releases" },
+    ForkEvent:              { one: "fork",    many: "forks" },
+    WatchEvent:             { one: "star",    many: "stars" },
+  };
+  // Subtract 1 since the latest event is already shown as the headline.
+  const types = Array.from(g.types.entries()).map(([t, c]) => {
+    const k = t === g.latest.type ? c - 1 : c;
+    return [t, k];
+  }).filter(([, c]) => c > 0);
+  if (types.length === 0) return "";
+  types.sort((a, b) => b[1] - a[1]);
+  const top = types.slice(0, 3).map(([t, c]) => {
+    const lbl = labels[t] || { one: t.replace(/Event$/, "").toLowerCase(), many: t.replace(/Event$/, "").toLowerCase() + "s" };
+    return `${c} ${c === 1 ? lbl.one : lbl.many}`;
+  });
+  return top.join(" · ");
+}
+
+function renderFeedGroup(g) {
+  const ev = g.latest;
+  const { primary, secondary } = feedGroupHeadline(g);
+  const tail = feedGroupTail(g);
+  const sourceClass = `is-${ev.source}`;
+  return `
+    <li class="alch-feed-item alch-feed-group ${sourceClass}"
+        data-event-id="${escHtml(ev.id)}"
+        data-url="${escHtml(ev.url || "")}">
+      <div class="alch-feed-glyph" aria-hidden="true">${feedSourceGlyph(ev.source)}</div>
+      <div class="alch-feed-body">
+        <div class="alch-feed-headline">
+          <span class="alch-feed-team">${escHtml(primary)}</span>
+          ${secondary ? `<span class="alch-feed-sep">·</span><span class="alch-feed-repo">${escHtml(secondary)}</span>` : ""}
+        </div>
+        <div class="alch-feed-summary">
+          <span class="alch-feed-action">${escHtml(ev.summary || "")}</span>
+        </div>
+        ${tail ? `<div class="alch-feed-tail">+ ${escHtml(tail)} this week</div>` : ""}
+      </div>
+      <div class="alch-feed-time" title="${escHtml(new Date(ev.at_ms).toLocaleString())}">${escHtml(relativeTime(ev.at_ms))}</div>
+    </li>
+  `;
+}
+
+// Kept for any caller that still wants a per-event view (currently none
+// after the rollup; safe to delete in a later sweep).
 function renderFeedItem(ev) {
   const teamName = teamLabel(ev.team_id);
   const sourceClass = `is-${ev.source}`;
