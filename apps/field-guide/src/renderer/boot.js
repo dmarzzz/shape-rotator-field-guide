@@ -102,9 +102,11 @@ setInterval(() => refreshLiveCount(), 5000);
 
 // ─── app-update chip (electron-updater + GitHub Releases) ────────────
 // Wires the version chip in the top-right of the tab bar. On boot, paints
-// `v0.x.y` (or `v0.x.y · dev` in dev). Click checks for updates; if one's
-// available, download → install via two confirms. Background "available"
-// styling kicks in once we know there's a newer version.
+// `v0.x.y` (or `v0.x.y · dev` in dev). Click opens an inline panel
+// anchored under the chip — see updatePanel(). The `data-update="available"`
+// hook is still stamped on the chip when a newer version is known, so
+// the existing CSS treatment (cyan tint in the cosmic theme, ink-1 in
+// the editorial theme) keeps working.
 async function wireAppUpdateChip() {
   const chip = document.getElementById("fg-version-chip");
   if (!chip) return;
@@ -113,53 +115,249 @@ async function wireAppUpdateChip() {
   if (info) {
     chip.textContent = `v${info.version}${info.isPackaged ? "" : "·dev"}`;
     chip.title = info.isPackaged
-      ? `v${info.version} · click to check for updates`
+      ? `v${info.version} · click for updates`
       : `v${info.version} · dev mode (auto-update disabled)`;
+    chip.dataset.current = info.version;
   } else {
     chip.textContent = "v?";
   }
-  chip.addEventListener("click", checkAppUpdate);
+  chip.addEventListener("click", () => toggleUpdatePanel(chip));
 }
-async function checkAppUpdate() {
+
+// ── inline update panel — replaces the two native confirm() dialogs ─
+// Single panel, anchored under the chip. State machine:
+//
+//   idle        → "check for updates" (the chip was clicked while we
+//                 don't yet know if an update exists)
+//   checking    → "checking…" with a spinner glyph
+//   up-to-date  → "you're on the latest" with a dismiss
+//   error       → diagnostic line + dismiss
+//   available   → versions + [download] [later]
+//   downloading → versions + % bar
+//   downloaded  → versions + [install + restart] [install on next quit]
+//   restarting  → "restarting…" (terminal — the app is about to die)
+//
+// Dismiss on outside click or Escape. Latest known check result is
+// memoized on the chip element so re-opening the panel doesn't re-fire
+// the network call.
+let _updatePanelEl = null;
+let _updatePanelOff = null;     // unsubscribe handle for fg:update-progress
+let _updatePanelState = null;   // { phase, current, latest, percent, detail }
+
+function toggleUpdatePanel(chip) {
+  if (_updatePanelEl) { closeUpdatePanel(); return; }
+  openUpdatePanel(chip);
+}
+
+function openUpdatePanel(chip) {
+  const panel = document.createElement("div");
+  panel.className = "fg-update-panel";
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-label", "app update");
+  document.body.appendChild(panel);
+  _updatePanelEl = panel;
+
+  // anchor: right-align to the chip, top under it. We position via fixed
+  // coords (not absolute relative to .tab-bar) so the panel doesn't get
+  // clipped by tab-bar's overflow rules.
+  const rect = chip.getBoundingClientRect();
+  panel.style.top = `${Math.round(rect.bottom + 6)}px`;
+  panel.style.right = `${Math.round(window.innerWidth - rect.right)}px`;
+
+  // seed state from whatever the chip last knew. If we've never checked
+  // (or the previous check said "available"), start in the right phase
+  // immediately so the user sees something useful on the first click.
+  const known = chip.dataset.update === "available"
+    ? { phase: "available", current: chip.dataset.current || "?", latest: chip.dataset.latest || "?" }
+    : { phase: "idle",      current: chip.dataset.current || "?", latest: null };
+  setUpdateState(known);
+
+  // outside-click dismissal — defer one tick so the click that opened us
+  // doesn't immediately close us.
+  setTimeout(() => {
+    document.addEventListener("mousedown", _onUpdatePanelOutsideClick, true);
+    document.addEventListener("keydown",   _onUpdatePanelKeydown);
+  }, 0);
+
+  // wire progress stream. Each call returns its own unsubscribe so we
+  // don't leak listeners across open/close cycles.
+  if (window.api?.onUpdateProgress && !_updatePanelOff) {
+    _updatePanelOff = window.api.onUpdateProgress((p) => {
+      if (!_updatePanelState || _updatePanelState.phase !== "downloading") return;
+      setUpdateState({ ..._updatePanelState, percent: Math.max(0, Math.min(100, p.percent || 0)) });
+    });
+  }
+
+  // if we were already "available", let the user act immediately;
+  // otherwise kick off a check.
+  if (known.phase !== "available") runUpdateCheck(chip);
+}
+
+function closeUpdatePanel() {
+  document.removeEventListener("mousedown", _onUpdatePanelOutsideClick, true);
+  document.removeEventListener("keydown",   _onUpdatePanelKeydown);
+  if (_updatePanelOff) { try { _updatePanelOff(); } catch {} _updatePanelOff = null; }
+  if (_updatePanelEl) { _updatePanelEl.remove(); _updatePanelEl = null; }
+  _updatePanelState = null;
+}
+
+function _onUpdatePanelOutsideClick(e) {
+  if (!_updatePanelEl) return;
   const chip = document.getElementById("fg-version-chip");
-  if (!chip) return;
-  const prevTitle = chip.title;
-  chip.title = "checking for updates…";
+  if (_updatePanelEl.contains(e.target)) return;
+  if (chip && chip.contains(e.target)) return;
+  closeUpdatePanel();
+}
+function _onUpdatePanelKeydown(e) {
+  if (e.key === "Escape") closeUpdatePanel();
+}
+
+function setUpdateState(next) {
+  _updatePanelState = next;
+  renderUpdatePanel(next);
+}
+
+function renderUpdatePanel(st) {
+  if (!_updatePanelEl) return;
+  const chip = document.getElementById("fg-version-chip");
+  const current = st.current || "?";
+  const latest  = st.latest  || "—";
+
+  const versionRow = `
+    <div class="fg-up-versions">
+      <div class="fg-up-vcol"><span class="fg-up-vlbl">current</span><span class="fg-up-vval">v${escapeHtml(current)}</span></div>
+      <div class="fg-up-arrow" aria-hidden="true">→</div>
+      <div class="fg-up-vcol"><span class="fg-up-vlbl">latest</span><span class="fg-up-vval">v${escapeHtml(latest)}</span></div>
+    </div>`;
+
+  let body = "";
+  let actions = "";
+
+  switch (st.phase) {
+    case "checking":
+      body = `<div class="fg-up-line">checking for updates…</div>`;
+      break;
+    case "up-to-date":
+      body = `<div class="fg-up-line">you're on the latest build.</div>`;
+      actions = `<button type="button" class="fg-up-btn" data-act="close">dismiss</button>`;
+      break;
+    case "error":
+      body = `<div class="fg-up-line fg-up-err">${escapeHtml(st.detail || "update flow failed.")}</div>`;
+      actions = `<button type="button" class="fg-up-btn" data-act="close">dismiss</button>`;
+      break;
+    case "dev":
+      body = `<div class="fg-up-line">${escapeHtml(st.detail || "auto-update disabled in dev.")}</div>`;
+      actions = `<button type="button" class="fg-up-btn" data-act="close">dismiss</button>`;
+      break;
+    case "available":
+      body = `<div class="fg-up-line">a newer build is available.</div>`;
+      actions = `
+        <button type="button" class="fg-up-btn fg-up-btn-primary" data-act="download">download</button>
+        <button type="button" class="fg-up-btn" data-act="close">later</button>`;
+      break;
+    case "downloading": {
+      const pct = Math.round(st.percent || 0);
+      body = `
+        <div class="fg-up-line">downloading update…</div>
+        <div class="fg-up-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}">
+          <div class="fg-up-bar-fill" style="width:${pct}%"></div>
+        </div>
+        <div class="fg-up-pct">${pct}%</div>`;
+      break;
+    }
+    case "downloaded":
+      body = `<div class="fg-up-line">download complete.</div>`;
+      actions = `
+        <button type="button" class="fg-up-btn fg-up-btn-primary" data-act="restart">install + restart</button>
+        <button type="button" class="fg-up-btn" data-act="defer">install on next quit</button>`;
+      break;
+    case "restarting":
+      body = `<div class="fg-up-line">restarting…</div>`;
+      break;
+    case "idle":
+    default:
+      body = `<div class="fg-up-line">check for updates.</div>`;
+      actions = `<button type="button" class="fg-up-btn fg-up-btn-primary" data-act="check">check now</button>`;
+      break;
+  }
+
+  _updatePanelEl.innerHTML = `
+    <header class="fg-up-head">
+      <span class="fg-up-title">app update</span>
+      <button type="button" class="fg-up-close" data-act="close" aria-label="close">×</button>
+    </header>
+    ${versionRow}
+    <div class="fg-up-body">${body}</div>
+    ${actions ? `<div class="fg-up-actions">${actions}</div>` : ""}
+  `;
+
+  _updatePanelEl.querySelectorAll("[data-act]").forEach((b) => {
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const act = b.getAttribute("data-act");
+      if (act === "close")    return closeUpdatePanel();
+      if (act === "check")    return runUpdateCheck(chip);
+      if (act === "download") return runUpdateDownload(chip);
+      if (act === "defer")    return closeUpdatePanel();
+      if (act === "restart")  return runUpdateRestart();
+    });
+  });
+}
+
+async function runUpdateCheck(chip) {
+  setUpdateState({ ..._updatePanelState, phase: "checking" });
   try {
     const r = await window.api.checkAppUpdate?.();
-    if (!r) { chip.title = prevTitle; return; }
+    if (!r) { setUpdateState({ ..._updatePanelState, phase: "error", detail: "no response from updater." }); return; }
     if (!r.ok && r.reason === "dev_mode") {
-      chip.title = `dev mode · ${r.detail || "update disabled"}`;
+      setUpdateState({ ..._updatePanelState, phase: "dev", current: r.current || _updatePanelState.current, detail: r.detail });
       return;
     }
     if (!r.ok) {
-      chip.title = `update check failed: ${r.detail || r.reason}`;
+      setUpdateState({ ..._updatePanelState, phase: "error", current: r.current || _updatePanelState.current, detail: r.detail || r.reason });
       return;
     }
+    const current = r.current || _updatePanelState.current;
+    if (chip) chip.dataset.current = current;
     if (!r.available) {
-      chip.title = `up to date · v${r.current}`;
-      chip.removeAttribute("data-update");
+      if (chip) { chip.removeAttribute("data-update"); chip.title = `up to date · v${current}`; }
+      setUpdateState({ ..._updatePanelState, phase: "up-to-date", current, latest: r.latest || current });
       return;
     }
-    chip.dataset.update = "available";
-    chip.title = `update available · v${r.latest} (you have v${r.current})`;
-    const ok = window.confirm(`Update available: v${r.latest} (you have v${r.current}).\n\nDownload now? It will install on next quit.`);
-    if (!ok) return;
-    chip.title = "downloading update…";
+    if (chip) {
+      chip.dataset.update = "available";
+      chip.dataset.latest = r.latest || "";
+      chip.title = `update available · v${r.latest} (you have v${current})`;
+    }
+    setUpdateState({ ..._updatePanelState, phase: "available", current, latest: r.latest });
+  } catch (e) {
+    setUpdateState({ ..._updatePanelState, phase: "error", detail: e?.message || String(e) });
+  }
+}
+
+async function runUpdateDownload(chip) {
+  setUpdateState({ ..._updatePanelState, phase: "downloading", percent: 0 });
+  try {
     const dl = await window.api.applyAppUpdate?.();
     if (!dl?.ok) {
-      chip.title = `download failed: ${dl?.detail || dl?.reason || "unknown"}`;
+      setUpdateState({ ..._updatePanelState, phase: "error", detail: dl?.detail || dl?.reason || "download failed." });
       return;
     }
-    const restart = window.confirm(`Downloaded v${r.latest}.\n\nRestart now to install?`);
-    if (restart) {
-      await window.api.applyUpdateAndRestart?.();
-    } else {
-      chip.title = `v${r.latest} downloaded · will install on next quit`;
-    }
+    if (chip) chip.title = `v${_updatePanelState.latest} downloaded · install on next quit (or click chip)`;
+    setUpdateState({ ..._updatePanelState, phase: "downloaded", percent: 100 });
   } catch (e) {
-    chip.title = `update flow failed: ${e?.message || e}`;
+    setUpdateState({ ..._updatePanelState, phase: "error", detail: e?.message || String(e) });
   }
+}
+
+async function runUpdateRestart() {
+  setUpdateState({ ..._updatePanelState, phase: "restarting" });
+  try { await window.api.applyUpdateAndRestart?.(); }
+  catch (e) { setUpdateState({ ..._updatePanelState, phase: "error", detail: e?.message || String(e) }); }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 async function boot() {
@@ -207,6 +405,19 @@ async function boot() {
   }, 8000);
   mountTitlebarMark();
   mountPaletteMark();
+  launch.setStatus("loading cohort data", 0.25);
+  // Hand the control object off to whoever drives boot completion below.
+  // We dismiss the overlay once alchemy has mounted + first render is in
+  // flight — that's the first moment the user can do something useful.
+  window.__srfgLaunch = launch;
+  // Safety net: never block the user behind the splash longer than 8s,
+  // even if the alchemy mount path doesn't fire ready() for any reason.
+  setTimeout(() => {
+    if (window.__srfgLaunch) {
+      try { window.__srfgLaunch.skip(); } catch {}
+      window.__srfgLaunch = null;
+    }
+  }, 8000);
 
   // mount global UX scaffolding before everything else so any boot-time
   // toast / status update lands in the right surface
