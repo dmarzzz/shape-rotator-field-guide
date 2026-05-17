@@ -1,4 +1,4 @@
-@import "../../../packages/shape-ui/tokens.css";
+@import "vendor/shape-ui/tokens.css";
 
 /* ─── self-hosted type ─────────────────────────────────────────────────────
  * Geist Sans + Geist Mono variable woff2, both OFL (see assets/fonts/OFL.txt).

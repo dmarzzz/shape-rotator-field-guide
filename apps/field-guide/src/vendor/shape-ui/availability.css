@@ -1,0 +1,127 @@
+/* Cohort availability matrix — rows = people, cols = days (or weeks once
+ * the range exceeds the auto-collapse threshold). Lives in shape-ui so
+ * the field-guide (Electron) and the sibling web app render it the same.
+ * Consumer apps must already have tokens.css applied to :root. */
+
+.avail {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) 1fr;
+  column-gap: var(--space-3);
+  row-gap: 0;
+  font-family: var(--font-mono);
+  font-size: var(--t-11);
+  font-feature-settings: var(--num-feat);
+  color: var(--ink-2);
+}
+
+.avail-header {
+  display: contents;
+}
+
+.avail-header-spacer,
+.avail-header-cols {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--hairline);
+  background: var(--water);
+}
+
+.avail-header-cols {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  align-items: end;
+  color: var(--ink-3);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+}
+
+.avail-tick {
+  font-size: var(--t-11);
+  line-height: var(--lh-tight);
+  padding-left: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  color: var(--ink-3);
+}
+
+.avail-tick--quiet {
+  color: transparent;
+}
+
+/* row = [label, cells] pair, rendered via display:contents so it
+ * participates in the parent grid. */
+.avail-row {
+  display: contents;
+}
+
+.avail-name {
+  padding: var(--space-1) var(--space-2);
+  color: var(--ink-2);
+  font-family: var(--font-sans);
+  font-size: var(--t-13);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  border-bottom: 1px solid var(--hairline);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.avail-name:hover,
+.avail-name:focus-visible {
+  color: var(--ink-1);
+  outline: none;
+}
+
+.avail-cells {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  align-items: stretch;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.avail-cell {
+  height: 14px;
+  border-right: 1px solid transparent;
+  background: transparent;
+}
+
+/* week separator — barely-there hairline between Sun and Mon */
+.avail-cell--week-edge {
+  border-right: 1px solid var(--hairline);
+}
+
+.avail-cell--present {
+  background: var(--accent-soft);
+}
+
+.avail-cell--present.avail-cell--today {
+  background: var(--accent-glow);
+}
+
+.avail-cell--absent {
+  background: transparent;
+}
+
+/* row hover — keep the column structure visible, just brighten the row */
+.avail-row:hover .avail-name {
+  color: var(--ink-1);
+}
+
+.avail-row:hover .avail-cell--present {
+  background: var(--accent-glow);
+}
+
+.avail-empty {
+  grid-column: 1 / -1;
+  padding: var(--space-4);
+  color: var(--ink-4);
+  font-family: var(--font-mono);
+  font-size: var(--t-12);
+  text-align: center;
+}
