@@ -661,7 +661,7 @@ function setConstellationHover(stage, recordId, on) {
 // Export: PNG via canvas.toDataURL → Electron IPC save dialog. PNG is
 // the most messaging-app-friendly format (renders inline in iMessage,
 // Slack, Discord). PDF as bonus through electron's printToPDF if asked.
-const CAL_DAY_W      = 22;        // pixel width per day column
+const CAL_DAY_W      = 18;        // pixel width per day column (was 22; tightened so 62-day windows fit common viewports without horizontal scroll)
 const CAL_ROW_H      = 32;        // height per person row
 const CAL_HEADER_H   = 148;       // top — concurrent strip + month band + week labels + day numbers
 const CAL_DENSITY_H  = 32;        // height of the concurrent-headcount strip above the grid
@@ -3747,6 +3747,15 @@ function loadEditTarget() {
   const cohort = state.cohort;
   if (!cohort) { p.editDraft = null; p.editBaseline = null; return; }
 
+  // Sticky draft: only (re)seed when the edit context actually changed.
+  // Same mode + same kind + same target → preserve whatever the user has
+  // typed across re-renders (sub-tab switches, top-tab switches, cohort
+  // refreshes, etc.). Previously every render call clobbered the draft,
+  // wiping in-progress text.
+  const contextKey = `${p.editMode}|${p.editKind}|${p.editTargetId || ""}`;
+  if (p._editContextKey === contextKey && p.editDraft) return;
+  p._editContextKey = contextKey;
+
   // ADD mode: seed a blank draft for the chosen kind. No baseline (null
   // signals "creating", which submitEditAsPR uses to pick /new/ URL).
   if (p.editMode === "add") {
@@ -4027,9 +4036,16 @@ function wireProfileForm() {
   }
 
   // Edit form: live-update editDraft on input. NO re-render so focus
-  // stays in the input the user is typing into.
+  // stays in the input the user is typing into. Persists the draft to
+  // localStorage on a 350ms debounce so an app relaunch (or accidental
+  // close) doesn't wipe in-progress text.
   const editForm = document.getElementById("alch-pf-edit-form");
   if (editForm) {
+    let saveTimer = null;
+    const scheduleSave = () => {
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => { saveProfile(); saveTimer = null; }, 350);
+    };
     const onChange = (e) => {
       const target = e.target;
       if (!target?.name || !state.profile.editDraft) return;
@@ -4039,6 +4055,7 @@ function wireProfileForm() {
       if (target.type === "number") coerced = value === "" ? null : Number(value);
       else if (value === "") coerced = null;
       setNested(state.profile.editDraft, target.name, coerced);
+      scheduleSave();
       // Refresh the ADD path preview so the user can see exactly where
       // their record will land before they hit submit. Folder mirrors
       // renderSubmitBlock: people → people/, team+project → teams/.
