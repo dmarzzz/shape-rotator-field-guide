@@ -14,7 +14,9 @@
     "check:cohort": "node scripts/build-bundles.js --check",
     "publish:cohort": "node scripts/publish-bundles.js",
     "publish:cohort:dry": "node scripts/publish-bundles.js --dry-run",
-    "keys:gen": "node scripts/keys-gen.js"
+    "keys:gen": "node scripts/keys-gen.js",
+    "vendor:web": "rm -rf apps/web/shape-ui && cp -R packages/shape-ui apps/web/shape-ui && cp apps/field-guide/src/cohort-surface.json apps/web/cohort-surface.json",
+    "deploy:web": "npm run vendor:web && cd apps/web && vercel deploy --prod --yes"
   },
   "devDependencies": {
     "js-yaml": "^4.1.1"
