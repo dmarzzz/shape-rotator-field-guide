@@ -8,7 +8,7 @@
 //  - Heavy damping; idle camera drift
 
 import * as THREE from "three";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { UnrealBloomPass } from "../vendor/three-extras/postprocessing/UnrealBloomPass.js";
 
 import { LENSES, LENS_LIST } from "./lenses.js";
 import { SHAPES, SHAPE_LIST, easeOutQuart } from "./shapes.js";

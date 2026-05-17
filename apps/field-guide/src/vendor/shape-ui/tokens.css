@@ -1,0 +1,94 @@
+/* Shared design tokens — single source of truth for the shape-rotator design system.
+ * Edits here propagate to both the field-guide Electron app and the sibling web app.
+ * Do NOT add scoped/subsystem overrides here (e.g. --ed-*, --alchemy-*, --tab-bar-h). */
+:root {
+  --abyss: #02010a;
+  --water: #06051a;
+  --glass: rgba(10, 8, 28, 0.62);
+  /* ─ ink ramp (round 3) ────────────────────────────────────────────────
+   * Editorial discipline. Four levels of ink + one accent, used the way
+   * Stripe Press / are.na / World use a limited palette: title, body,
+   * caption, hairline — and one accent reserved for affordances.
+   * --ink-1 is the brightest text — but never pure white. Chrome-grey
+   * 235/238/250 at .94 is what designers reach for instead of #fff —
+   * it sits on dark glass without shouting.
+   * --ink-2 is the working body weight; most rendered text is here.
+   * --ink-3 is the caption / metadata level. Smallcaps live here.
+   * --ink-4 is the marginalia level. Visible, but quiet.
+   * --hairline is for borders + 1px insets — barely there.
+   * The legacy --light-1..4 + --ink-50/300/500/700/900 aliases continue
+   * to resolve correctly; new code should reach for --ink-1..4 directly. */
+  --ink-1:    rgba(235, 238, 250, 0.94);   /* title / emphasis */
+  --ink-2:    rgba(225, 232, 248, 0.74);   /* body */
+  --ink-3:    rgba(220, 232, 255, 0.46);   /* caption / smallcaps label */
+  --ink-4:    rgba(220, 232, 255, 0.24);   /* marginalia / placeholder */
+  --hairline: rgba(220, 232, 255, 0.08);
+  /* legacy aliases — keep existing rules valid */
+  --ink-50:  var(--ink-1);
+  --ink-300: var(--ink-2);
+  --ink-500: var(--ink-3);
+  --ink-700: var(--ink-4);
+  --ink-900: var(--hairline);
+  --light-1: var(--ink-1);
+  --light-2: var(--ink-2);
+  --light-3: var(--ink-3);
+  --light-4: var(--ink-4);
+  --aura: rgba(160, 200, 255, 0.30);
+  --aura-strong: rgba(180, 220, 255, 0.50);
+  --neon-magenta: #FF4FE6;
+  /* The accent. One color, used with discipline — focus rings, the active
+   * tab underline, the pinned peer ring, the anomaly dot, the live
+   * status. We softened it from #5AF0FF to #8DEAF2 — still legible on
+   * the dark glass, but no longer the loudest thing on the page. */
+  --accent:        #8DEAF2;
+  --accent-soft:   rgba(141, 234, 242, 0.16);
+  --accent-glow:   rgba(141, 234, 242, 0.42);
+  --neon-cyan: var(--accent);  /* legacy alias */
+  --neon-amber: #FFB454;
+  /* semantic state colors — used for toasts, status dots, anomaly callouts */
+  --c-success: #6EE7B7;
+  --c-warn:    #FFB454;
+  --c-error:   #FF6B7A;
+  --c-info:    var(--accent);
+  /* type — Geist Sans (UI) + Geist Mono (numerics, code, ALL CAPS labels). */
+  --font-sans: "Geist", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Berkeley Mono", "JetBrains Mono", ui-monospace, monospace;
+  /* type scale — 11/12/13/15/18/24/32 with line-heights tuned per role. */
+  --t-11: 11px; --t-12: 12px; --t-13: 13px; --t-15: 15px;
+  --t-18: 18px; --t-24: 24px; --t-32: 32px;
+  --lh-tight: 1.2;
+  --lh-snug:  1.35;
+  --lh-relax: 1.5;
+  /* tracking */
+  --track-caps:  0.06em;   /* eyebrow, less aggressive than 0.18 */
+  --track-caps-loose: 0.18em;
+  --track-tight: -0.012em;
+  /* numerics — every numeric display gets these. tnum + zero locks digit
+   * width so animated counters don't shimmy; ss01 swaps the disambiguated
+   * single-storey "a" + clearer "I/l/1" forms. cv11 clears the comma. */
+  --num-feat: "tnum" 1, "zero" 1, "ss01" 1, "cv11" 1;
+  --sidebar-w: 340px;
+  /* spacing — 4px grid */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  /* motion tokens — ease-out covers state changes (Linear/Vercel/Sonner).
+   * --ease-snap is reserved for entrances (palette open, toast in).
+   * durations capped at 380ms after testing — 420 felt mushy on tab switch. */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);          /* legacy alias for --ease-out */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-snap: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur-fast: 120ms;
+  --dur-base: 220ms;
+  --dur-slow: 380ms;
+  /* radii */
+  --r-sm: 4px;
+  --r-md: 8px;
+  --r-lg: 12px;
+}
