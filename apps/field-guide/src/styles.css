@@ -9816,3 +9816,32 @@ textarea.alch-asks-compose-input { resize: vertical; min-height: 74px; }
   border-color: var(--sr-red) !important;
   color: var(--sr-red) !important;
 }
+
+/* ── availability presence canvas — make scroll bar visible ──────────
+   On macOS the system scrollbar is hidden until hover, so users were
+   getting a clipped-canvas-with-no-scroll experience on the gantt.
+   Force a slim always-visible track on .cal-scroll inside the presence
+   block. Webkit/blink + native fallback. */
+.cal-section-presence .cal-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(245,243,238,0.30) rgba(245,243,238,0.05);
+}
+.cal-section-presence .cal-scroll::-webkit-scrollbar {
+  height: 12px;
+  background: rgba(245,243,238,0.04);
+}
+.cal-section-presence .cal-scroll::-webkit-scrollbar-thumb {
+  background: rgba(245,243,238,0.28);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.cal-section-presence .cal-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(245,243,238,0.50);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+/* Belt-and-suspenders on the wrap — anything that overflows horizontally
+   here gets its own scroll container instead of being clipped by the
+   ancestor canvas padding. */
+.cal-avail-wrap { overflow-x: visible; }
