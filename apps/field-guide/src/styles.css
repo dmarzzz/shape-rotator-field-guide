@@ -9171,6 +9171,35 @@ html, body {
 .cal-rhythm-when       { font-size: 11px; letter-spacing: 0.22em; }
 .cal-rhythm-note       { font-size: 13px; line-height: 1.45; }
 
+/* When the rhythm card lives inside the this-week side panel (≈360px
+   wide), the 3-column row collapses the note column to one-word lines.
+   Override to a stacked layout: slot + weekdays on a top line, note
+   flowing below at full panel width. */
+.cal-tw-rhythm .cal-rhythm-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "slot when"
+    "note note";
+  gap: 4px 14px;
+  padding: 12px 0;
+  align-items: baseline;
+}
+.cal-tw-rhythm .cal-rhythm-slot { grid-area: slot; font-size: 15px; }
+.cal-tw-rhythm .cal-rhythm-when {
+  grid-area: when;
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-align: right;
+  opacity: 0.65;
+}
+.cal-tw-rhythm .cal-rhythm-note {
+  grid-area: note;
+  font-size: 13px;
+  line-height: 1.55;
+  opacity: 0.85;
+}
+
 /* ── callouts ─────────────────────────────────────────────────────── */
 .alch-callout          { margin: 32px auto 0; max-width: 88ch; font-size: 12px; line-height: 1.65; padding: 14px 16px; border-left: 1px dashed rgba(245,243,238,0.14); background: rgba(245,243,238,0.018); }
 .alch-callout strong   { font-size: 10.5px; letter-spacing: 0.20em; }

@@ -1401,6 +1401,68 @@ function renderOnboarding() {
   `;
 }
 
+// Celebrate finishing an onboarding step. Pure-DOM particle burst — no
+// library, no canvas, ~60 absolutely-positioned divs animated via the
+// Web Animations API with a gravity-flavored cubic-bezier. Honours the
+// user's reduced-motion preference (no burst at all when set).
+function triggerConfetti(originEl) {
+  if (!originEl) return;
+  if (typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    return;
+  }
+  const rect = originEl.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+
+  // Cohort palette — keep the celebration on-brand with the rest of the
+  // app rather than rainbow Mardi Gras.
+  const colors = ["#c44025", "#c1a872", "#e8b94c", "#7eb499", "#f5f3ee"];
+
+  const container = document.createElement("div");
+  container.className = "confetti-burst";
+  container.style.cssText =
+    `position:fixed;left:${cx}px;top:${cy}px;` +
+    `pointer-events:none;z-index:9999;width:0;height:0;`;
+  document.body.appendChild(container);
+
+  const N = 56;
+  for (let i = 0; i < N; i++) {
+    const p = document.createElement("div");
+    // Random direction (full 360°), then gravity-biased velocity.
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 220 + Math.random() * 260;
+    const dx = Math.cos(angle) * speed;
+    const dy = Math.sin(angle) * speed - 180;  // upward bias on the way out
+    const fall = 760 + Math.random() * 240;     // gravity arc on the way down
+    const spin = (Math.random() - 0.5) * 1080;
+    const color = colors[i % colors.length];
+    const w = 6 + Math.random() * 5;
+    const h = 3 + Math.random() * 4;
+    const round = Math.random() > 0.55 ? "50%" : "1px";
+    const dur = 1500 + Math.random() * 900;
+    const startRot = Math.random() * 360;
+
+    p.style.cssText =
+      `position:absolute;left:0;top:0;` +
+      `width:${w.toFixed(1)}px;height:${h.toFixed(1)}px;` +
+      `background:${color};border-radius:${round};` +
+      `transform:translate(-50%,-50%) rotate(${startRot}deg);`;
+    container.appendChild(p);
+
+    p.animate(
+      [
+        { transform: `translate(-50%,-50%) rotate(${startRot}deg)`, opacity: 1 },
+        { transform: `translate(calc(-50% + ${dx.toFixed(1)}px), calc(-50% + ${dy.toFixed(1)}px)) rotate(${(startRot + spin).toFixed(1)}deg)`, opacity: 1, offset: 0.32 },
+        { transform: `translate(calc(-50% + ${dx.toFixed(1)}px), calc(-50% + ${(dy + fall).toFixed(1)}px)) rotate(${(startRot + spin * 2).toFixed(1)}deg)`, opacity: 0 },
+      ],
+      { duration: dur, easing: "cubic-bezier(0.16, 1, 0.3, 1)", fill: "forwards" }
+    );
+  }
+  // Cleanup once the longest animation could have finished.
+  setTimeout(() => { try { container.remove(); } catch {} }, 2700);
+}
+
 // Submit a single-field update from an onboarding inline form. Build the
 // YAML patch, open github's web editor on the target record, and show the
 // patch alongside (web editor doesn't accept pre-filled content for existing
@@ -1459,7 +1521,12 @@ function wireOnboarding() {
     btn.addEventListener("click", () => {
       const key = btn.dataset.onbToggle;
       if (!key) return;
+      // Detect direction: only celebrate when going OFF → ON. Unmarking
+      // (clearing a stuck override) shouldn't fire confetti.
+      const wasDone = !!loadOnboardingDone()[key];
       toggleOnboardingDone(key);
+      const isDoneNow = !!loadOnboardingDone()[key];
+      if (!wasDone && isDoneNow) triggerConfetti(btn);
       // Remember which step we just toggled so the post-render handler
       // can scroll to (and momentarily pulse) whatever comes next.
       state.onboardingJustToggled = key;
