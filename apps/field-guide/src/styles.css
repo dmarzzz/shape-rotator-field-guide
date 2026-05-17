@@ -9845,3 +9845,96 @@ textarea.alch-asks-compose-input { resize: vertical; min-height: 74px; }
    here gets its own scroll container instead of being clipped by the
    ancestor canvas padding. */
 .cal-avail-wrap { overflow-x: visible; }
+
+/* ── fork-first prompt modal ───────────────────────────────────────
+   Shown when the user has a github handle on their cohort record but
+   no fork of the repo exists. One-time setup; after they click "create
+   fork" + return, the cache busts and every future submit is direct. */
+.fork-prompt-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(11, 10, 8, 0.72);
+  backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 32px 18px;
+  z-index: 1000;
+}
+.fork-prompt {
+  max-width: 560px; width: 100%;
+  background: linear-gradient(180deg, #18150f 0%, #110f0c 100%);
+  border: 1px solid rgba(245,243,238,0.14);
+  border-left: 3px solid var(--sr-red);
+  padding: 28px 30px 24px;
+}
+.fp-head { margin-bottom: 18px; }
+.fp-title {
+  font-family: var(--sr-font-sans);
+  font-style: italic;
+  font-size: 26px;
+  letter-spacing: -0.01em;
+  color: var(--ed-ink-1, #f5f3ee);
+  margin: 0 0 12px 0;
+}
+.fp-sub {
+  font-family: var(--sr-font-sans);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ed-ink-1, #f5f3ee);
+  opacity: 0.78;
+  margin: 0;
+}
+.fp-sub code, .fp-line code {
+  font-family: var(--sr-font-mono);
+  font-size: 12px;
+  background: rgba(245,243,238,0.06);
+  padding: 1px 6px;
+  border-radius: 2px;
+}
+.fp-body { margin: 18px 0 22px; padding: 16px 18px;
+  background: rgba(245,243,238,0.025);
+  border-left: 2px dashed rgba(245,243,238,0.18);
+}
+.fp-line {
+  font-family: var(--sr-font-sans);
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ed-ink-1, #f5f3ee);
+  margin: 0 0 8px 0;
+}
+.fp-line:last-child { margin-bottom: 0; }
+.fp-aux {
+  font-family: var(--sr-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  opacity: 0.55;
+}
+.fp-foot {
+  display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  padding-top: 18px;
+  border-top: 1px solid rgba(245,243,238,0.10);
+}
+.fp-btn {
+  appearance: none;
+  background: rgba(245,243,238,0.04);
+  border: 1px solid rgba(245,243,238,0.20);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-family: var(--sr-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: lowercase;
+  color: var(--ed-ink-1, #f5f3ee);
+  cursor: pointer;
+  transition: color 200ms ease, border-color 200ms ease, background 200ms ease;
+}
+.fp-btn:hover { border-color: rgba(245,243,238,0.55); }
+.fp-btn-primary {
+  background: rgba(143, 34, 14, 0.12);
+  border-color: var(--sr-red);
+  color: var(--sr-red);
+}
+.fp-btn-primary:hover {
+  background: rgba(143, 34, 14, 0.22);
+  border-color: var(--sr-red);
+}
+.fp-btn-skip { margin-left: auto; opacity: 0.55; }
+.fp-btn-skip:hover { opacity: 1; }

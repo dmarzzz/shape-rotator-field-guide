@@ -28,6 +28,7 @@ import {
   buildCalendarRows, drawCalendar,
 } from "@shape-rotator/shape-ui";
 import { getCohortSurface, subscribeToCohortChanges } from "./cohort-source.js";
+import { resolvePRForCurrentUser, clearForkCache } from "./gh-fork.js";
 
 const ALCHEMY_LS_KEY  = "srwk:alchemy_mode";
 const PROFILE_LS_KEY  = "srwk:profile_v1";
@@ -540,6 +541,84 @@ function renderConstellation() {
 
 // escHtml / escAttr live in @shape-rotator/shape-ui now (imported above).
 
+// ─── fork-aware PR launcher ─────────────────────────────────────────
+// Every PR-creating click (edit/new) routes through here. Resolves the
+// right URL via gh-fork.js:
+//   - User has a fork that exists → open URL on their fork directly.
+//   - User has a handle but no fork → show the "create your fork (one
+//     click)" modal; after the fork is created (~3s) the next click
+//     goes direct.
+//   - User has no claimed identity / no github handle → fall back to
+//     the canonical /edit/ URL and rely on GitHub's auto-fork-on-
+//     Propose-changes (the legacy behavior).
+//
+// Returns:
+//   { ok: true, url }                — URL was opened
+//   { ok: false, reason: "needs-fork" } — fork modal shown, no URL opened
+async function launchPRFlow({ kind, path, value }) {
+  let res;
+  try {
+    res = await resolvePRForCurrentUser({ kind, path, value });
+  } catch (e) {
+    console.warn("[pr-launcher] resolve failed:", e?.message || e);
+    return { ok: false, reason: "resolve-failed" };
+  }
+  if (res.kind === "ready") {
+    try { window.api?.openExternal?.(res.url); } catch {}
+    return { ok: true, url: res.url };
+  }
+  if (res.kind === "needs-fork") {
+    showForkPrompt(res);
+    return { ok: false, reason: "needs-fork", forkUrl: res.forkUrl, canonicalUrl: res.canonicalUrl };
+  }
+  // no-identity fallback
+  try { window.api?.openExternal?.(res.canonicalUrl); } catch {}
+  return { ok: true, url: res.canonicalUrl, fallback: true };
+}
+
+// Modal prompting the user to create their fork. One-time per device
+// per cohort member — after they click "create fork" + GitHub finishes,
+// clearForkCache wipes the stale "fork doesn't exist" entry so the
+// retry hits "ready."
+let _forkPromptEl = null;
+function showForkPrompt({ forkUrl, canonicalUrl, handle, retryHint }) {
+  if (_forkPromptEl) return;
+  const overlay = document.createElement("div");
+  overlay.className = "fork-prompt-backdrop";
+  overlay.innerHTML = `
+    <div class="fork-prompt" role="dialog" aria-labelledby="fp-title">
+      <header class="fp-head">
+        <h2 id="fp-title" class="fp-title">create your fork — one click</h2>
+        <p class="fp-sub">cohort members don't have direct write access to <code>${escHtml("dmarzzz/shape-rotator-field-guide")}</code>. you'll submit your edits as PRs from your own fork. this is a <strong>one-time setup</strong> — every future edit goes straight to your fork after this.</p>
+      </header>
+      <section class="fp-body">
+        <p class="fp-line">you'll be sent to github to click <strong>"create fork"</strong>. takes about 3 seconds. when it's done, come back to this app and click submit again — every subsequent edit lands directly in your fork.</p>
+        <p class="fp-line fp-aux">target fork: <code>${escHtml(handle)}/shape-rotator-field-guide</code></p>
+      </section>
+      <footer class="fp-foot">
+        <button class="fp-btn fp-btn-primary" id="fp-create" type="button">open github · create fork</button>
+        <button class="fp-btn" id="fp-retry" type="button" title="click after you've forked">i've forked · retry</button>
+        <button class="fp-btn fp-btn-skip" id="fp-cancel" type="button">cancel</button>
+      </footer>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  _forkPromptEl = overlay;
+  const close = () => { overlay.remove(); _forkPromptEl = null; };
+  overlay.querySelector("#fp-create")?.addEventListener("click", () => {
+    try { window.api?.openExternal?.(forkUrl); } catch {}
+  });
+  overlay.querySelector("#fp-retry")?.addEventListener("click", () => {
+    // Bust the cache so the next launchPRFlow rechecks the api.
+    clearForkCache(handle);
+    close();
+    // Don't re-launch automatically — user might have moved on. They'll
+    // click submit again from the original form.
+  });
+  overlay.querySelector("#fp-cancel")?.addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+}
+
 // ─── shape card → drawer ─────────────────────────────────────────────
 function wireShapeCardClicks() {
   const cards = state.canvas.querySelectorAll(".alch-card[data-record-id]");
@@ -797,10 +876,12 @@ function fmtEventWhen(e) {
 // Build the GitHub /new/ URL with a prefilled template for adding an event.
 // Filename slug is date-prefixed-title so the directory stays chronologically
 // sortable in the file browser (mirroring our existing files).
-function buildAddEventUrl() {
+// Returns the path + template for an "add new event" launch. The
+// fork-aware launcher (launchPRFlow) consumes these to build the URL
+// targeting the right owner (user's fork when known).
+function buildAddEventSpec() {
   const today = new Date();
   const iso = today.toISOString().slice(0, 10);
-  const branch = "main";
   const slug = `${iso}-new-event`;
   const template = `---
 record_id: ${slug}
@@ -818,14 +899,10 @@ links: {}
 
 (public surface — fill in this body if there's prose to attach)
 `;
-  const path = `cohort-data/events/${slug}.md`;
-  return `https://github.com/dmarzzz/shape-rotator-field-guide/new/${branch}` +
-    `?filename=${encodeURIComponent(path)}` +
-    `&value=${encodeURIComponent(template)}` +
-    `&quick_pull=1`;
+  return { path: `cohort-data/events/${slug}.md`, value: template };
 }
-function buildEditEventUrl(recordId) {
-  return `https://github.com/dmarzzz/shape-rotator-field-guide/edit/main/cohort-data/events/${encodeURIComponent(recordId)}.md?quick_pull=1`;
+function buildEditEventSpec(recordId) {
+  return { path: `cohort-data/events/${recordId}.md` };
 }
 
 // ── card markup ──────────────────────────────────────────────────────
@@ -833,7 +910,6 @@ function buildEditEventUrl(recordId) {
 function renderEventCard(e, opts = {}) {
   const today = Date.now();
   const st = eventStateFor(e, today);
-  const editUrl = buildEditEventUrl(e.record_id);
   const linkBits = [];
   const L = e.links || {};
   if (L.website) linkBits.push(`<a class="cal-event-link" data-external href="${escAttr(L.website)}">website</a>`);
@@ -849,7 +925,7 @@ function renderEventCard(e, opts = {}) {
         ${linkBits.length ? `<div class="cal-event-links">${linkBits.join('<span class="acm-sep">·</span>')}</div>` : ""}
       </div>
       <div class="cal-event-actions">
-        <a class="cal-event-edit" data-cal-edit="${escAttr(editUrl)}" href="#" title="edit on github">✎</a>
+        <a class="cal-event-edit" data-cal-record="${escAttr(e.record_id)}" href="#" title="edit on github">✎</a>
       </div>
     </article>
   `;
@@ -954,7 +1030,6 @@ function renderCalSchedule() {
   const now    = all.filter(e => eventStateFor(e, today) === "now");
   const future = all.filter(e => eventStateFor(e, today) === "future");
 
-  const addUrl = buildAddEventUrl();
   const sectionsFlat = [
     now.length    ? { title: "happening now", count: now.length,    list: now }    : null,
     future.length ? { title: "future",        count: future.length, list: future } : null,
@@ -978,7 +1053,7 @@ function renderCalSchedule() {
           <h3 class="cal-section-title">key dates</h3>
           <span class="cal-section-sub">${all.length} milestone${all.length === 1 ? "" : "s"} · click ✎ on any card to edit</span>
         </div>
-        <button class="alch-feed-btn cal-sched-add" type="button" data-cal-add-url="${escAttr(addUrl)}">
+        <button class="alch-feed-btn cal-sched-add" type="button">
           <span aria-hidden="true">+</span><span>add a key date</span>
         </button>
       </header>
@@ -1098,15 +1173,17 @@ function wireCalendar() {
     });
   }
   // Add-event launcher (schedule view)
-  const addBtn = state.canvas.querySelector(".cal-sched-add[data-cal-add-url]");
-  if (addBtn) addBtn.addEventListener("click", () => {
-    try { window.api?.openExternal?.(addBtn.dataset.calAddUrl); } catch {}
+  const addBtn = state.canvas.querySelector(".cal-sched-add");
+  if (addBtn) addBtn.addEventListener("click", async () => {
+    const { path, value } = buildAddEventSpec();
+    await launchPRFlow({ kind: "new", path, value });
   });
   // Per-card edit launcher
-  for (const a of state.canvas.querySelectorAll(".cal-event-edit[data-cal-edit]")) {
-    a.addEventListener("click", (e) => {
+  for (const a of state.canvas.querySelectorAll(".cal-event-edit[data-cal-record]")) {
+    a.addEventListener("click", async (e) => {
       e.preventDefault();
-      try { window.api?.openExternal?.(a.dataset.calEdit); } catch {}
+      const { path } = buildEditEventSpec(a.dataset.calRecord);
+      await launchPRFlow({ kind: "edit", path });
     });
   }
   // Availability view's "edit my availability" → profile editor (person).
@@ -1482,7 +1559,7 @@ function triggerConfetti(originEl) {
 // YAML patch, open github's web editor on the target record, and show the
 // patch alongside (web editor doesn't accept pre-filled content for existing
 // files — user pastes the patch under their frontmatter, saves, and PRs).
-function submitOnboardingInline(form) {
+async function submitOnboardingInline(form) {
   const recordKind = form.dataset.recordKind || "person";
   const recordId   = form.dataset.recordId;
   const fieldKey   = form.dataset.fieldKey;
@@ -1501,10 +1578,24 @@ function submitOnboardingInline(form) {
                : recordKind === "team" || recordKind === "project" ? "teams"
                : `${recordKind}s`;
   const filename = `cohort-data/${folder}/${recordId}.md`;
-  const editUrl = `https://github.com/dmarzzz/shape-rotator-field-guide/edit/main/${filename}?quick_pull=1`;
   const patch = `${fieldKey}: ${yamlScalar(value, 2)}`;
 
-  try { window.api?.openExternal?.(editUrl); } catch {}
+  // Resolve fork-aware URL. needsFork pops a modal; ready opens the URL
+  // on the user's fork (or the canonical repo if they have no identity).
+  const launched = await launchPRFlow({ kind: "edit", path: filename });
+  if (!launched.ok) {
+    // needs-fork modal is already showing. Render a soft note in the
+    // inline panel so the user knows their typed value is preserved.
+    result.hidden = false;
+    result.innerHTML = `
+      <p class="alch-onb-inline-line">
+        <span class="alch-onb-inline-tag">fork first</span>
+        once your fork exists, click submit again — your text is still in the box.
+      </p>
+    `;
+    return;
+  }
+  const editUrl = launched.url;
   result.hidden = false;
   result.innerHTML = `
     <p class="alch-onb-inline-line">
@@ -1712,7 +1803,6 @@ function renderProgram() {
 
   const bodyHtml = renderProgramMarkdown(current.body_md);
   const editPath = `cohort-data/program/${current.record_id}.md`;
-  const editUrl = `https://github.com/dmarzzz/shape-rotator-field-guide/edit/main/${editPath}?quick_pull=1`;
 
   state.canvas.innerHTML = `
     <header class="alch-prog-head">
@@ -1723,7 +1813,7 @@ function renderProgram() {
     <article class="alch-prog-page">
       <header class="alch-prog-page-head">
         <h2 class="alch-prog-page-title">${escHtml(current.title || current.record_id)}</h2>
-        <button class="alch-feed-btn alch-prog-edit" type="button" data-edit-url="${escAttr(editUrl)}" title="opens github's web editor (PR-only)">
+        <button class="alch-feed-btn alch-prog-edit" type="button" data-edit-path="${escAttr(editPath)}" title="opens github's web editor (PR-only)">
           <span aria-hidden="true">✎</span>
           <span>edit this page</span>
         </button>
@@ -1743,10 +1833,10 @@ function wireProgram() {
       render();
     });
   }
-  const editBtn = state.canvas.querySelector(".alch-prog-edit[data-edit-url]");
+  const editBtn = state.canvas.querySelector(".alch-prog-edit[data-edit-path]");
   if (editBtn) {
-    editBtn.addEventListener("click", () => {
-      try { window.api?.openExternal?.(editBtn.dataset.editUrl); } catch {}
+    editBtn.addEventListener("click", async () => {
+      await launchPRFlow({ kind: "edit", path: editBtn.dataset.editPath });
     });
   }
   wireExternalLinks(state.canvas);
@@ -1933,7 +2023,7 @@ function renderAsks() {
 // slug for the file (author + date + 4-char topic hash to dedupe same-day
 // asks from the same author), builds the full ask markdown, and opens
 // github's /new/ URL with that content prefilled.
-function submitAskCompose(form) {
+async function submitAskCompose(form) {
   const authorSlug = form.dataset.authorSlug || "your-slug";
   const todayIso   = form.dataset.today || new Date().toISOString().slice(0, 10);
   const verb       = String(form.elements.verb?.value || "🤝 pair on").trim();
@@ -1978,12 +2068,22 @@ status: open
 (optional body — extra context for the ask.)
 `;
   const filename = `cohort-data/asks/${recordId}.md`;
-  const newUrl = `https://github.com/dmarzzz/shape-rotator-field-guide/new/main` +
-    `?filename=${encodeURIComponent(filename)}` +
-    `&value=${encodeURIComponent(askMarkdown)}` +
-    `&quick_pull=1`;
 
-  try { window.api?.openExternal?.(newUrl); } catch {}
+  // Fork-aware launch. needs-fork pops a modal; ready opens the URL on
+  // the user's fork (with the prefilled markdown) and we render the
+  // preview panel below for confidence.
+  const launched = await launchPRFlow({ kind: "new", path: filename, value: askMarkdown });
+  if (!launched.ok) {
+    result.hidden = false;
+    result.innerHTML = `
+      <p class="alch-onb-inline-line">
+        <span class="alch-onb-inline-tag">fork first</span>
+        once your fork exists, click submit again — your verb, topic, and tags are still in the form.
+      </p>
+    `;
+    return;
+  }
+  const newUrl = launched.url;
   result.hidden = false;
   result.innerHTML = `
     <p class="alch-onb-inline-line">
@@ -2011,11 +2111,10 @@ function wireAsks() {
     });
   }
   for (const a of state.canvas.querySelectorAll(".alch-asks-action[data-asks-edit]")) {
-    a.addEventListener("click", (e) => {
+    a.addEventListener("click", async (e) => {
       e.preventDefault();
       const slug = a.dataset.asksEdit;
-      const url = `https://github.com/dmarzzz/shape-rotator-field-guide/edit/main/cohort-data/asks/${encodeURIComponent(slug)}.md?quick_pull=1`;
-      try { window.api?.openExternal?.(url); } catch {}
+      await launchPRFlow({ kind: "edit", path: `cohort-data/asks/${slug}.md` });
     });
   }
   // Inline jump to program → rules from the callout.
@@ -4230,13 +4329,10 @@ function formatYamlValue(v, indent = 2) {
   return yamlScalar(v, indent);
 }
 
-function submitEditAsPR() {
+async function submitEditAsPR() {
   const result = document.getElementById("alch-submit-pr-result");
   if (!result) return;
   const p = state.profile;
-  const owner  = "dmarzzz";
-  const repo   = "shape-rotator-field-guide";
-  const branch = "main";
 
   // ADD mode → github /new/ URL with prefilled content.
   if (p.editMode === "add") {
@@ -4257,16 +4353,15 @@ function submitEditAsPR() {
     const content = p.editKind === "person"
       ? buildPersonMarkdown(p.editDraft, slug)
       : buildTeamMarkdown(p.editDraft, slug, p.editKind);
-    // `quick_pull=1` forces github's commit dialog to default to
-    // "create a new branch and start a pull request" instead of letting
-    // a writer commit directly to main. Without it, anyone with push
-    // access (i.e. the alchemists) accidentally bypasses PR review.
-    const url =
-      `https://github.com/${owner}/${repo}/new/${branch}` +
-      `?filename=${encodeURIComponent(filename)}` +
-      `&value=${encodeURIComponent(content)}` +
-      `&quick_pull=1`;
-    try { window.api?.openExternal?.(url); } catch {}
+
+    const launched = await launchPRFlow({ kind: "new", path: filename, value: content });
+    if (!launched.ok) {
+      result.hidden = false;
+      result.dataset.kind = "needs-fork";
+      result.innerHTML = `<div class="aspr-line"><span class="aspr-tag aspr-tag-warn">fork first</span> <span>create your fork (one click — modal is open), then click submit again. your draft is preserved.</span></div>`;
+      return;
+    }
+    const url = launched.url;
     result.hidden = false;
     result.dataset.kind = "success";
     result.innerHTML = `
@@ -4292,9 +4387,6 @@ function submitEditAsPR() {
   const fields = (p.editKind === "person") ? PERSON_EDITABLE_FIELDS : teamFieldsFor(p.editKind);
   const folder = (p.editKind === "person") ? "people" : "teams";
   const filename = `cohort-data/${folder}/${slug}.md`;
-  // quick_pull=1 — force the commit dialog into "create new branch +
-  // open PR" mode so writers can't accidentally commit straight to main.
-  const editUrl = `https://github.com/${owner}/${repo}/edit/${branch}/${filename}?quick_pull=1`;
   const diff = computeFieldDiff(p.editBaseline || {}, p.editDraft || {}, fields);
   if (diff.length === 0) {
     result.hidden = false;
@@ -4303,6 +4395,16 @@ function submitEditAsPR() {
     return;
   }
   const patch = buildYamlPatch(diff);
+
+  const launched = await launchPRFlow({ kind: "edit", path: filename });
+  if (!launched.ok) {
+    result.hidden = false;
+    result.dataset.kind = "needs-fork";
+    result.innerHTML = `<div class="aspr-line"><span class="aspr-tag aspr-tag-warn">fork first</span> <span>create your fork (one click — modal is open), then click submit again. your draft is preserved.</span></div>`;
+    return;
+  }
+  const editUrl = launched.url;
+
   const diffRows = diff.map(d => `
     <div class="aspr-diff-row">
       <span class="aspr-diff-key">${escHtml(d.label)}</span>
@@ -4326,7 +4428,6 @@ function submitEditAsPR() {
       <button type="button" class="alch-feed-btn aspr-reopen">reopen editor</button>
     </div>
   `;
-  try { window.api?.openExternal?.(editUrl); } catch {}
   const reopen = result.querySelector(".aspr-reopen");
   if (reopen) reopen.addEventListener("click", () => { try { window.api?.openExternal?.(editUrl); } catch {} });
   const copy = result.querySelector(".aspr-copy");
