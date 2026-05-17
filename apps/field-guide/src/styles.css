@@ -9500,3 +9500,242 @@ textarea.alch-asks-compose-input { resize: vertical; min-height: 74px; }
   color: var(--ed-ink-1);
   opacity: 0.55;
 }
+
+/* ═════════════════════════════════════════════════════════════════════
+   SHAPE ROTATOR AESTHETIC PASS — bring this app's visual language closer
+   to shaperotator.xyz without flipping the dark stage to warm-paper.
+   What changes:
+     · Adopt the canonical sr-* color tokens (oxide red shifts #c44025 →
+       #8f220e; warm-grays warmed up).
+     · Adopt the canonical font pair: Space Grotesk + JetBrains Mono
+       (replaces Iowan Old Style + Geist Mono everywhere meaningful).
+     · Push the alchemy rail prominence — wider, larger numerals, more
+       breathing.
+     · Stronger specimen-tag treatment on numbered things.
+   What deliberately stays:
+     · Dark charcoal stage (this is the field-guide's identity).
+     · Italic display headings (uses Space Grotesk's italic now).
+     · Existing card/border vocabulary.
+   ═════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Canonical Shape Rotator palette (matches shaperotator.xyz). */
+  --sr-paper:        #f1ece7;
+  --sr-cream:        #f7f1ec;
+  --sr-paper-muted:  #c8bfb9;
+  --sr-gray:         #c2b7b0;
+  --sr-gray-light:   #655c59;
+  --sr-ink:          #231f20;
+  --sr-charcoal:     #211d1f;
+  --sr-red:          #8f220e;
+
+  /* Font stacks — Space Grotesk does service for display + body so the
+     italic variant carries the "specimen card" tone without dragging
+     Iowan/Hoefler along. JetBrains Mono for labels + code. */
+  --sr-font-sans:  "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --sr-font-mono:  "JetBrains Mono", ui-monospace, "SFMono-Regular", "Geist Mono", monospace;
+}
+
+/* Map the legacy --ed-* / --font-* / --alchemy-* vars to the canonical
+   tokens. This is the central swap: every component that already reads
+   these variables now resolves to the shaperotator.xyz palette without
+   touching individual class definitions. */
+:root {
+  --ed-display: var(--sr-font-sans);
+  --ed-serif:   var(--sr-font-sans);
+  --ed-mono:    var(--sr-font-mono);
+  --font-mono:  var(--sr-font-mono);
+}
+
+/* Oxide-red — shift every prior reference to the canonical brand red.
+   #c44025 was a slightly orange variant; #8f220e is the deeper archival
+   shade that matches the .xyz site exactly. */
+.alch-feed-loading-bar-fill { background: var(--sr-red); }
+.is-onb-next-pulse           { /* unchanged but tinted at the use site below */ }
+
+/* Re-define the keyframe so the pulse uses sr-red rather than #c44025. */
+@keyframes alch-onb-pulse {
+  0%   { box-shadow: inset 4px 0 0 0 var(--sr-red); background: rgba(143, 34, 14, 0.10); }
+  60%  { box-shadow: inset 4px 0 0 0 rgba(143, 34, 14, 0.0); background: rgba(143, 34, 14, 0.04); }
+  100% { box-shadow: inset 4px 0 0 0 rgba(143, 34, 14, 0.0); background: transparent; }
+}
+
+/* Element-level overrides where the old #c44025 was hard-coded. Keep
+   the change list explicit so the audit trail is clear. */
+.cal-keydate[data-kind="demo"]            { border-left-color: var(--sr-red); }
+.cal-keydate[data-state="now"]            { background: rgba(143, 34, 14, 0.07); }
+.cal-event[data-kind="demo"]              { border-left-color: var(--sr-red); }
+.cal-event[data-state="now"]              { background: rgba(143, 34, 14, 0.07); }
+.alch-onb-step[data-state="missing"]      { border-left-color: var(--sr-red); }
+.alch-onb-step[data-state="missing"] .alch-onb-step-mark { border-color: var(--sr-red); }
+.alch-prog-tab[aria-selected="true"]      { border-bottom-color: var(--sr-red); }
+.cal-subtab[aria-selected="true"]         { border-bottom-color: var(--sr-red); }
+.alch-const-mode-btn[aria-selected="true"]{ border-bottom-color: var(--sr-red); }
+.alch-prog-body a,
+.alch-event-link,
+.alch-asks-action,
+.alch-onb-inline-link                     { color: var(--sr-red); border-bottom-color: rgba(143, 34, 14, 0.45); }
+.alch-asks-card                           { border-left-color: rgba(143, 34, 14, 0.45); }
+.alch-feed-loading-spin                   { border-top-color: var(--sr-red); }
+
+/* ── alchemy rail — bigger, more substantial ───────────────────────
+   The rail was a wisp of numerals before. Push width, type size, and
+   row padding so it reads as primary navigation, not metadata. */
+.alchemy-rail {
+  flex: 0 0 280px !important;
+  padding: 36px 20px 36px 28px !important;
+}
+.alchemy-rail-btn {
+  padding: 14px 14px 14px 0 !important;
+  gap: 16px !important;
+  display: grid !important;
+  grid-template-columns: 38px 1fr !important;
+  align-items: baseline !important;
+}
+.alchemy-rail-btn .ar-num {
+  font-family: var(--sr-font-mono);
+  font-size: 13px !important;
+  letter-spacing: 0.18em;
+  font-weight: 500;
+  opacity: 0.50;
+}
+.alchemy-rail-btn[aria-selected="true"] .ar-num { opacity: 0.85; color: var(--sr-red); }
+.alchemy-rail-btn .ar-label {
+  font-family: var(--sr-font-mono);
+  font-size: 14px !important;
+  letter-spacing: 0.10em;
+  font-weight: 400;
+  text-transform: lowercase;
+  line-height: 1.0 !important;
+}
+.alchemy-rail-btn[aria-selected="true"] .ar-label { font-weight: 500; }
+.alchemy-rail-btn .ar-hint {
+  grid-column: 2 / 3;
+  font-family: var(--sr-font-mono);
+  font-size: 10.5px !important;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+  opacity: 0.50;
+  margin-top: 4px;
+}
+
+/* ── headings — Space Grotesk italic carries the editorial tone ── */
+.alch-prog-title,
+.alch-asks-title,
+.alch-onb-title,
+.cal-page-title,
+.alch-feed-title,
+.alchemy-canvas h2 {
+  font-family: var(--sr-font-sans) !important;
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: -0.015em;
+}
+
+/* Section / sub headings */
+.alch-prog-page-title,
+.alch-prog-h1, .alch-prog-h2, .alch-prog-h3, .alch-prog-h4,
+.alch-asks-section-title,
+.alch-onb-step-title,
+.cal-section-title,
+.cal-tw-h-label,
+.cal-sched-h-label,
+.cal-event-title,
+.alch-prog-tab-label,
+.cal-subtab .cs-label,
+.alch-asks-verb,
+.alch-asks-compose-title,
+.alch-feed-loading-title {
+  font-family: var(--sr-font-sans) !important;
+  font-style: italic;
+  font-weight: 400;
+}
+
+/* Body prose — Space Grotesk regular (not italic). Slightly tighter
+   line-height than Iowan needed; Grotesk reads cleaner at 1.55. */
+.alch-prog-body,
+.alch-prog-p,
+.alch-onb-step-ask,
+.alch-asks-topic,
+.cal-event-sub,
+.cal-rhythm-note,
+.cal-tw-empty-msg,
+.alch-feed-loading-foot {
+  font-family: var(--sr-font-sans) !important;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1.55;
+}
+
+/* All mono caps / metadata text → JetBrains Mono */
+.alch-prog-sub,
+.alch-asks-sub,
+.alch-onb-sub,
+.cal-page-sub,
+.cal-section-sub,
+.cal-tw-h-count,
+.cal-tw-weeklabel,
+.cal-sched-h-count,
+.cal-event-when,
+.cal-rhythm-when,
+.cal-rhythm-slot,
+.cal-keydate-when,
+.cal-keydate-sub,
+.alch-asks-section-count,
+.alch-asks-section-note,
+.alch-asks-meta,
+.alch-asks-chip,
+.alch-asks-action,
+.alch-asks-status,
+.alch-onb-step-num,
+.alch-onb-done,
+.alch-onb-inline-line,
+.alch-onb-inline-hint,
+.alch-onb-inline-tag,
+.alch-onb-inline-copy,
+.alch-onb-inline-link,
+.alch-asks-compose-label,
+.alch-asks-compose-sub,
+.alch-asks-compose-author,
+.alch-asks-compose-hint,
+.alch-feed-btn,
+.alch-feed-loading-sub,
+.alch-callout,
+.cs-num,
+.cs-hint,
+.cs-label,
+.acm-hint,
+.acm-label {
+  font-family: var(--sr-font-mono) !important;
+}
+
+/* The keydate "headline" + event title stay italic display for tone. */
+.cal-keydate-title { font-family: var(--sr-font-sans) !important; font-style: italic; }
+
+/* Specimen tag treatment — the "01 / 02 / 03" prefixes on cards. Box
+   them slightly so they read as catalog metadata rather than ambient
+   numerals. */
+.alch-onb-step-num,
+.cs-num,
+.cal-keydate-when,
+.cal-event-when {
+  font-weight: 500;
+  letter-spacing: 0.22em;
+}
+
+/* Hover states — quiet, slow, no neon. Matches the museum tone. */
+.alchemy-rail-btn { transition: opacity 200ms ease, color 200ms ease, border-color 200ms ease; }
+.alchemy-rail-btn:hover .ar-label { opacity: 0.95; }
+.alchemy-rail-btn:hover .ar-num   { opacity: 0.75; }
+
+/* Active rail row gets a left edge instead of cyan box. */
+.alchemy-rail-btn { position: relative; border: 0 !important; outline: 0 !important; }
+.alchemy-rail-btn::before {
+  content: "";
+  position: absolute;
+  left: -28px; top: 14px; bottom: 14px;
+  width: 2px;
+  background: transparent;
+  transition: background 200ms ease;
+}
+.alchemy-rail-btn[aria-selected="true"]::before { background: var(--sr-red); }
