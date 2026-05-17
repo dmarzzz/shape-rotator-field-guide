@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>shape rotator field guide</title>
+  <meta name="description" content="cohort viewer for the shape rotator program. download for macOS, windows, linux." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="styles/web.css" />
+  <!-- TODO: code signing — when certs are procured, remove Gatekeeper/SmartScreen warnings. -->
+  <!-- TODO: wire cohort-surface.json copy into the deploy step instead of vendoring -->
+</head>
+<body>
+  <header class="site-header">
+    <nav id="site-nav" class="site-nav" aria-label="primary">
+      <a class="site-nav-mark" href="/">shape rotator <span class="site-nav-mark-sub">field guide</span></a>
+      <ul class="site-nav-links" role="list">
+        <li><a href="/cohort">cohort</a></li>
+        <li><a href="/calendar">calendar</a></li>
+        <li><a href="/availability">availability</a></li>
+        <li><a href="/profile">profile</a></li>
+      </ul>
+      <span class="site-nav-version" data-version-chip>v—</span>
+    </nav>
+  </header>
+
+  <main class="page">
+    <section class="hero" aria-labelledby="hero-title">
+      <p class="eyebrow">desktop · v<span data-version>—</span></p>
+      <h1 id="hero-title" class="hero-title">shape rotator field guide</h1>
+      <p class="hero-tagline">cohort viewer · download for desktop</p>
+
+      <div class="install" data-install>
+        <a class="install-cta" href="#all-platforms" data-install-primary>
+          <span class="install-cta-label">download</span>
+          <span class="install-cta-target" data-install-target>detecting platform…</span>
+        </a>
+        <p class="install-note">
+          unsigned build. macOS: right-click the .dmg, choose <em>open</em>.
+          windows: <em>more info → run anyway</em>.
+        </p>
+        <!-- TODO: universal mac binary — when added, collapse mac arm64/x64 picks to one. -->
+      </div>
+
+      <section class="all-platforms" id="all-platforms" aria-labelledby="all-platforms-heading">
+        <h2 id="all-platforms-heading" class="all-platforms-heading">all platforms</h2>
+        <dl class="platform-list" data-platform-list>
+          <div class="platform-row" data-platform="mac-arm64"><dt>macos · arm64</dt><dd><a href="#" data-asset="mac-arm64">…dmg</a></dd></div>
+          <div class="platform-row" data-platform="mac-x64"><dt>macos · x64</dt><dd><a href="#" data-asset="mac-x64">…dmg</a></dd></div>
+          <div class="platform-row" data-platform="win-x64"><dt>windows · x64</dt><dd><a href="#" data-asset="win-x64">…exe</a></dd></div>
+          <div class="platform-row" data-platform="win-arm64"><dt>windows · arm64</dt><dd><a href="#" data-asset="win-arm64">…exe</a></dd></div>
+          <div class="platform-row" data-platform="linux-x64"><dt>linux · x64</dt><dd><a href="#" data-asset="linux-x64">…AppImage</a></dd></div>
+          <div class="platform-row" data-platform="linux-arm64"><dt>linux · arm64</dt><dd><a href="#" data-asset="linux-arm64">…AppImage</a></dd></div>
+        </dl>
+      </section>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>v<span data-version>—</span></span>
+    <span aria-hidden="true">·</span>
+    <a href="https://github.com/dmarzzz/shape-rotator-field-guide">source</a>
+  </footer>
+
+  <script type="module" src="scripts/nav.js"></script>
+  <script type="module" src="scripts/download.js"></script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>cohort · shape rotator field guide</title>
+  <meta name="description" content="cohort viewer: teams and people." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="../styles/web.css" />
+  <!-- TODO: wire cohort-surface.json copy into the deploy step instead of vendoring -->
+  <script type="importmap">
+  { "imports": { "@shape-rotator/shape-ui": "../shape-ui/src/index.js" }}
+  </script>
+</head>
+<body>
+  <header class="site-header">
+    <nav id="site-nav" class="site-nav" aria-label="primary">
+      <a class="site-nav-mark" href="/">shape rotator <span class="site-nav-mark-sub">field guide</span></a>
+      <ul class="site-nav-links" role="list">
+        <li><a href="/cohort">cohort</a></li>
+        <li><a href="/calendar">calendar</a></li>
+        <li><a href="/availability">availability</a></li>
+        <li><a href="/profile">profile</a></li>
+      </ul>
+      <span class="site-nav-version" data-version-chip>v—</span>
+    </nav>
+  </header>
+
+  <main class="page">
+    <p class="page-eyebrow">cohort</p>
+    <h1 class="page-title">teams & projects</h1>
+    <div id="mount" class="page-mount"></div>
+  </main>
+
+  <footer class="site-footer">
+    <span>v<span data-version>—</span></span>
+    <span aria-hidden="true">·</span>
+    <a href="https://github.com/dmarzzz/shape-rotator-field-guide">source</a>
+  </footer>
+
+  <script type="module" src="../scripts/nav.js"></script>
+  <script type="module" src="../scripts/cohort.js"></script>
+</body>
+</html>
