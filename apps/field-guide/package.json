@@ -1,7 +1,7 @@
 {
   "name": "@shape-rotator/field-guide",
-  "productName": "Shape Rotator Field Guide",
-  "version": "0.1.4",
+  "productName": "Shape Rotator OS",
+  "version": "0.1.5",
   "private": true,
   "main": "main.js",
   "type": "commonjs",
