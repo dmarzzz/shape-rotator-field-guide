@@ -175,19 +175,12 @@ function labelInitials(label) {
   return parts.map(p => p[0]).join("").toUpperCase() || s[0].toUpperCase();
 }
 
-// Click on the pill: claimed → jump to the editor on the user's record;
-// unclaimed → open the onboarding modal.
+// Click on the pill: always open the identity modal. When already
+// claimed, the modal shows the current claim + lets the user switch
+// to a different record, edit their current record, or unclaim. When
+// unclaimed it's the first-launch flow.
 function openIdentityFlow() {
-  const id = getIdentity();
-  if (!id) {
-    showOnboardingModal();
-    return;
-  }
-  // Route to alchemy/profile/edit on the user's record. alchemy.js
-  // exposes window.__srwkOpenProfile so we don't need a hard import.
-  if (typeof window.__srwkOpenProfile === "function") {
-    window.__srwkOpenProfile({ kind: id.kind, record_id: id.record_id, mode: "edit" });
-  }
+  showOnboardingModal();
 }
 
 // ─── onboarding modal ────────────────────────────────────────────────
@@ -213,41 +206,65 @@ async function showOnboardingModal(cohortHint) {
   const teamsOnly = teams.filter(t => (t.kind || "team") === "team");
   const people   = cohort?.people   || [];
 
+  const currentId = getIdentity();
+  const currentResolved = currentId ? await resolveIdentityLabel() : null;
+  const claimed = !!currentId;
+
+  // Pre-select the current claim's record in the matching dropdown so
+  // switching is "open dropdown, pick a different name." Otherwise the
+  // selects start empty.
+  const optHtml = (records, kind) => records.map(r => {
+    const isCurrent = claimed && currentId.kind === kind && currentId.record_id === r.record_id;
+    return `<option value="${escAttr(r.record_id)}" ${isCurrent ? "selected" : ""}>${escHtml(r.name || r.record_id)}${kind === "person" && r.team ? ` · ${escHtml(r.team)}` : ""}</option>`;
+  }).join("");
+
   const overlay = document.createElement("div");
   overlay.className = "identity-modal-backdrop";
   overlay.innerHTML = `
     <div class="identity-modal" role="dialog" aria-labelledby="im-title">
       <header class="im-head">
-        <h2 id="im-title" class="im-title">welcome — who are you?</h2>
-        <p class="im-sub">tell shape rotator your record so the field-guide can show your team and route the editor straight to you. stored locally on this device only — no PR, no broadcast.</p>
+        <h2 id="im-title" class="im-title">
+          ${claimed ? "switch profile" : "welcome — who are you?"}
+        </h2>
+        <p class="im-sub">
+          ${claimed
+            ? `you're currently claimed as <strong>${escHtml(currentResolved?.label || currentId.display_name)}</strong> <span class="im-current-kind">(${escHtml(currentId.kind)} · ${escHtml(currentId.record_id)})</span>. pick a different record to switch, or use the actions below.`
+            : "tell shape rotator your record so the field-guide can show your team and route the editor straight to you. stored locally on this device only — no PR, no broadcast."}
+        </p>
+        ${claimed ? `
+          <div class="im-current-actions">
+            <button class="im-btn im-current-edit"    type="button" data-im-action="edit">edit my record</button>
+            <button class="im-btn im-current-unclaim" type="button" data-im-action="unclaim">unclaim · clear local identity</button>
+          </div>
+        ` : ""}
       </header>
 
       <section class="im-section">
-        <h3 class="im-h">i'm already on the cohort</h3>
+        <h3 class="im-h">${claimed ? "switch to a different cohort record" : "i'm already on the cohort"}</h3>
         <label class="im-row"><span>i am a person</span>
           <select id="im-person">
             <option value="">— pick yourself —</option>
-            ${people.map(p => `<option value="${escAttr(p.record_id)}">${escHtml(p.name || p.record_id)}${p.team ? ` · ${escHtml(p.team)}` : ""}</option>`).join("")}
+            ${optHtml(people, "person")}
           </select>
         </label>
         <label class="im-row"><span>or claim a team</span>
           <select id="im-team">
             <option value="">— pick a team —</option>
-            ${teamsOnly.map(t => `<option value="${escAttr(t.record_id)}">${escHtml(t.name)}</option>`).join("")}
+            ${optHtml(teamsOnly, "team")}
           </select>
         </label>
         ${projects.length ? `
           <label class="im-row"><span>or a project</span>
             <select id="im-project">
               <option value="">— pick a project —</option>
-              ${projects.map(t => `<option value="${escAttr(t.record_id)}">${escHtml(t.name)}</option>`).join("")}
+              ${optHtml(projects, "project")}
             </select>
           </label>
         ` : ""}
       </section>
 
       <section class="im-section">
-        <h3 class="im-h">i'm new</h3>
+        <h3 class="im-h">${claimed ? "or add a brand-new record" : "i'm new"}</h3>
         <p class="im-sub" style="margin:0 0 10px 0">opens the editor with a blank form — submit a PR to add yourself.</p>
         <div class="im-create-row">
           <button class="im-btn im-create" data-create="person"  type="button">+ new person</button>
@@ -257,7 +274,7 @@ async function showOnboardingModal(cohortHint) {
       </section>
 
       <footer class="im-foot">
-        <button class="im-skip" id="im-skip" type="button">i'll do this later</button>
+        <button class="im-skip" id="im-skip" type="button">${claimed ? "close" : "i'll do this later"}</button>
       </footer>
     </div>
   `;
@@ -269,7 +286,34 @@ async function showOnboardingModal(cohortHint) {
     _modalEl = null;
   };
 
-  // Pickers: claim by record.
+  // Current-claim quick actions (only present when claimed).
+  for (const btn of overlay.querySelectorAll("[data-im-action]")) {
+    btn.addEventListener("click", () => {
+      const a = btn.dataset.imAction;
+      if (a === "edit") {
+        close();
+        if (typeof window.__srwkOpenProfile === "function") {
+          window.__srwkOpenProfile({ kind: currentId.kind, record_id: currentId.record_id, mode: "edit" });
+        }
+      } else if (a === "unclaim") {
+        // Confirm-in-place — flips the button to "really clear?" so an
+        // accidental click doesn't drop the user's saved identity.
+        if (btn.dataset.confirming === "1") {
+          clearIdentity();
+          close();
+        } else {
+          btn.dataset.confirming = "1";
+          btn.textContent = "really clear? · click again";
+        }
+      }
+    });
+  }
+
+  // Pickers: claim by record. On first claim we drop the user into their
+  // editor so they can verify the record. On a SWITCH (already claimed,
+  // picking a different record) we just close — the user is mid-task and
+  // doesn't want to be yanked into a form. Picking the SAME record is a
+  // no-op close.
   const wirePick = (selId, kind, source) => {
     const sel = overlay.querySelector(`#${selId}`);
     if (!sel) return;
@@ -278,12 +322,18 @@ async function showOnboardingModal(cohortHint) {
       if (!id) return;
       const rec = source.find(r => r.record_id === id);
       if (!rec) return;
+      const isSame = claimed
+        && currentId.kind === kind
+        && currentId.record_id === rec.record_id;
+      if (isSame) { close(); return; }
       setIdentity({ kind, record_id: rec.record_id, display_name: rec.name || rec.record_id });
       close();
-      // Drop the user into their editor so they can verify the record.
-      if (typeof window.__srwkOpenProfile === "function") {
+      if (!claimed && typeof window.__srwkOpenProfile === "function") {
+        // First claim → land in the editor so they can verify their record.
         window.__srwkOpenProfile({ kind, record_id: rec.record_id, mode: "edit" });
       }
+      // Switch case: do nothing more. The top-right pill repaints via
+      // the onIdentityChanged listener; the user stays where they were.
     });
   };
   wirePick("im-person",  "person",  people);
