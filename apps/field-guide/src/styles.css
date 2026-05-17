@@ -9782,3 +9782,37 @@ textarea.alch-asks-compose-input { resize: vertical; min-height: 74px; }
   padding-top: 14px;
   padding-bottom: 14px;
 }
+
+/* ── identity modal — switch-profile additions ────────────────────── */
+.im-current-kind {
+  font-family: var(--sr-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  opacity: 0.55;
+  margin-left: 4px;
+}
+.im-current-actions {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  margin-top: 14px;
+}
+.im-current-edit {
+  border-color: rgba(193, 168, 114, 0.55) !important;
+  color: rgba(229, 212, 178, 0.95) !important;
+}
+.im-current-edit:hover {
+  background: rgba(193, 168, 114, 0.10) !important;
+  border-color: rgba(193, 168, 114, 0.85) !important;
+}
+.im-current-unclaim {
+  border-color: rgba(143, 34, 14, 0.55) !important;
+  color: var(--sr-red) !important;
+}
+.im-current-unclaim:hover {
+  background: rgba(143, 34, 14, 0.10) !important;
+  border-color: var(--sr-red) !important;
+}
+.im-current-unclaim[data-confirming="1"] {
+  background: rgba(143, 34, 14, 0.15) !important;
+  border-color: var(--sr-red) !important;
+  color: var(--sr-red) !important;
+}
