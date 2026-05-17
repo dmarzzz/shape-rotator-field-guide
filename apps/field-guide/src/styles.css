@@ -3967,6 +3967,51 @@ html[data-reduce-motion="1"] .rotor .rotor-shape > path:last-child { animation: 
   100%    { opacity: 1; }
 }
 
+/* progressive splash — status line + thin progress bar shown when
+ * mountLaunchOverlay({ progressive: true }) so the user can see the
+ * boot doing something. legacy non-progressive splash hides this. */
+.sig-launch-progress {
+  margin-top: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  opacity: 0;
+  animation: sig-sub-resolve 1900ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.sig-launch:not(.sig-launch-progressive) .sig-launch-progress {
+  display: none;
+}
+.sig-launch-progress-status {
+  font-family: var(--font-mono);
+  font-size: var(--t-10, 10px);
+  font-weight: 400;
+  color: var(--light-3);
+  letter-spacing: var(--track-caps);
+  text-transform: lowercase;
+  min-height: 1em;
+  transition: color 220ms ease;
+}
+.sig-launch-progress-bar {
+  width: 280px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 1px;
+  overflow: hidden;
+  position: relative;
+}
+.sig-launch-progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  background: var(--sr-red, #8f220e);
+  transition: width 360ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sig-launch.sig-launch-quick .sig-launch-progress {
+  animation: none;
+  opacity: 1;
+}
+
 /* leaving — fade the whole stage. */
 .sig-launch.sig-launch-leaving {
   opacity: 0;
