@@ -1555,10 +1555,11 @@ function triggerConfetti(originEl) {
   setTimeout(() => { try { container.remove(); } catch {} }, 2700);
 }
 
-// Submit a single-field update from an onboarding inline form. Build the
-// YAML patch, open github's web editor on the target record, and show the
-// patch alongside (web editor doesn't accept pre-filled content for existing
-// files — user pastes the patch under their frontmatter, saves, and PRs).
+// Submit a single-field update from an onboarding inline form. We fetch
+// the user's existing record, mutate the one targeted field, rebuild the
+// full markdown, and route through GitHub's /new/?value= URL — the file
+// already exists on main, so GitHub forces the "create new branch +
+// propose changes" path. Same pattern as the profile EDIT submit.
 async function submitOnboardingInline(form) {
   const recordKind = form.dataset.recordKind || "person";
   const recordId   = form.dataset.recordId;
@@ -1578,14 +1579,33 @@ async function submitOnboardingInline(form) {
                : recordKind === "team" || recordKind === "project" ? "teams"
                : `${recordKind}s`;
   const filename = `cohort-data/${folder}/${recordId}.md`;
-  const patch = `${fieldKey}: ${yamlScalar(value, 2)}`;
 
-  // Resolve fork-aware URL. needsFork pops a modal; ready opens the URL
-  // on the user's fork (or the canonical repo if they have no identity).
-  const launched = await launchPRFlow({ kind: "edit", path: filename });
+  // Pull the existing record from the cohort surface so the rebuild
+  // preserves every other field. Mutate just the one the user typed.
+  const cohort = state.cohort;
+  let baseline = null;
+  if (cohort) {
+    if (recordKind === "person") baseline = (cohort.people || []).find(r => r.record_id === recordId);
+    else baseline = (cohort.teams || []).find(r => r.record_id === recordId);
+  }
+  if (!baseline) {
+    result.hidden = false;
+    result.innerHTML = `<p class="alch-onb-inline-line alch-onb-inline-err">couldn't find your record in the local cohort cache. reload + try again.</p>`;
+    return;
+  }
+  const draft = JSON.parse(JSON.stringify(baseline));
+  draft[fieldKey] = value;
+
+  result.hidden = false;
+  result.innerHTML = `<p class="alch-onb-inline-line"><span class="alch-onb-inline-tag">preparing</span> building your updated file…</p>`;
+
+  const existingBody = await fetchExistingBody(filename);
+  const content = recordKind === "person"
+    ? buildPersonMarkdown(draft, recordId, existingBody)
+    : buildTeamMarkdown(draft, recordId, recordKind === "project" ? "project" : "team", existingBody);
+
+  const launched = await launchPRFlow({ kind: "new", path: filename, value: content });
   if (!launched.ok) {
-    // needs-fork modal is already showing. Render a soft note in the
-    // inline panel so the user knows their typed value is preserved.
     result.hidden = false;
     result.innerHTML = `
       <p class="alch-onb-inline-line">
@@ -1600,25 +1620,12 @@ async function submitOnboardingInline(form) {
   result.innerHTML = `
     <p class="alch-onb-inline-line">
       <span class="alch-onb-inline-tag">github opened</span>
-      paste this patch under your record's frontmatter, commit, and open the PR.
+      your <code>${escHtml(fieldKey)}</code> edit is pre-filled. on github: <strong>commit changes</strong> → <strong>propose changes</strong> → <strong>create pull request</strong>.
     </p>
-    <pre class="alch-onb-inline-patch">${escHtml(patch)}</pre>
     <div class="alch-onb-inline-row">
-      <button class="alch-onb-inline-copy" type="button">copy patch</button>
       <a class="alch-onb-inline-link" href="${escAttr(editUrl)}" data-external>reopen editor</a>
     </div>
   `;
-  const copyBtn = result.querySelector(".alch-onb-inline-copy");
-  if (copyBtn) {
-    copyBtn.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(patch);
-        const prev = copyBtn.textContent;
-        copyBtn.textContent = "copied";
-        setTimeout(() => { copyBtn.textContent = prev; }, 1400);
-      } catch {}
-    });
-  }
   wireExternalLinks(result);
 }
 
@@ -4200,9 +4207,15 @@ function yamlScalar(value, indent = 2) {
   return `|\n${lines.join("\n")}`;
 }
 
-// Build the full markdown content for a NEW team or project record.
-// Both share the team-shaped frontmatter; `kind` discriminates them.
-function buildTeamMarkdown(draft, slug, kind) {
+// Build the full markdown content for a team or project record. For NEW
+// records, `body` is null and the default placeholder is appended. For
+// EDIT submissions, the caller passes the preserved body (fetched from
+// raw.githubusercontent.com) so the user's existing description isn't
+// wiped when the YAML frontmatter is rewritten. `draft` is the editor's
+// working record and should include any fields the editor doesn't
+// expose (members_count baseline, etc.) so the rebuild is a strict
+// superset of the in-form fields.
+function buildTeamMarkdown(draft, slug, kind, body = null) {
   const links = draft.links || {};
   const lp = [];
   if (links.github)  lp.push(`  github: ${quoteYaml(links.github)}`);
@@ -4212,9 +4225,33 @@ function buildTeamMarkdown(draft, slug, kind) {
   if (links.demo)    lp.push(`  demo: ${quoteYaml(links.demo)}`);
   if (links.deck)    lp.push(`  deck: ${quoteYaml(links.deck)}`);
   const linksBlock = lp.length ? `links:\n${lp.join("\n")}` : `links: {}`;
+
+  // Preserve fields that the editor doesn't expose so we don't silently
+  // delete them on edit. `now`, `prior_shipping`, `skill_areas`,
+  // `dependencies`, `seeking`, `offering` live in the cohort surface
+  // record and ride along through `draft` (which is a clone of the
+  // baseline that the form mutates in-place).
+  const extras = [];
+  if (Array.isArray(draft.skill_areas) && draft.skill_areas.length) {
+    extras.push(`skill_areas:\n${draft.skill_areas.map(s => `  - ${s}`).join("\n")}`);
+  }
+  if (Array.isArray(draft.dependencies) && draft.dependencies.length) {
+    extras.push(`dependencies:\n${draft.dependencies.map(d => `  - ${d}`).join("\n")}`);
+  }
+  if (Array.isArray(draft.seeking) && draft.seeking.length) {
+    extras.push(`seeking:\n${draft.seeking.map(s => `  - ${quoteYaml(s)}`).join("\n")}`);
+  }
+  if (Array.isArray(draft.offering) && draft.offering.length) {
+    extras.push(`offering:\n${draft.offering.map(s => `  - ${quoteYaml(s)}`).join("\n")}`);
+  }
+  if (draft.now) extras.push(`now: ${quoteYaml(draft.now)}`);
+  if (draft.prior_shipping) extras.push(`prior_shipping: ${yamlScalar(draft.prior_shipping)}`);
+  const extrasBlock = extras.length ? `\n${extras.join("\n")}` : "";
+
   const bodyHint = kind === "project"
     ? "(project description — what it does, who it's for, current state)"
     : "(team description — focus, members, where to find you)";
+  const bodyContent = body != null && body.trim() ? body : `\n## about\n\n${bodyHint}\n`;
   return `---
 record_id: ${slug}
 record_type: team
@@ -4234,18 +4271,18 @@ hackathon_note: ${draft.hackathon_note ? quoteYaml(draft.hackathon_note) : "null
 success_dimensions: ${yamlScalar(draft.success_dimensions)}
 graduation_target: ${yamlScalar(draft.graduation_target)}
 monthly_milestones: ${yamlScalar(draft.monthly_milestones)}
-weekly_goals: ${yamlScalar(draft.weekly_goals)}
+weekly_goals: ${yamlScalar(draft.weekly_goals)}${extrasBlock}
 ---
-
-## about
-
-${bodyHint}
-`;
+${bodyContent}`;
 }
 
-// Build the full markdown content for a NEW person record. Used with
-// github's /new/ URL which accepts pre-filled content via query param.
-function buildPersonMarkdown(draft, slug) {
+// Build the full markdown content for a person record. For NEW records,
+// `body` is null (a placeholder is appended); for EDIT submissions the
+// caller passes the existing body so the user's bio survives a YAML
+// rewrite. `draft` should include non-editor fields (email, dates_*,
+// secondary_teams) — for EDIT mode these ride in via the baseline-clone
+// that the form mutates in place.
+function buildPersonMarkdown(draft, slug, body = null) {
   const links = draft.links || {};
   const lp = [];
   if (links.github)   lp.push(`  github: ${quoteYaml(links.github)}`);
@@ -4253,6 +4290,48 @@ function buildPersonMarkdown(draft, slug) {
   if (links.website)  lp.push(`  website: ${quoteYaml(links.website)}`);
   if (links.linkedin) lp.push(`  linkedin: ${quoteYaml(links.linkedin)}`);
   const linksBlock = lp.length ? `links:\n${lp.join("\n")}` : `links: {}`;
+
+  // Preserve fields that the editor form doesn't expose — these come
+  // from the cohort-surface clone (editDraft is a deep copy of the
+  // baseline record), and should never be wiped just because the user
+  // updated their name. Covers every surface_field from schema.yml's
+  // people block.
+  const extras = [];
+  if (draft.email) extras.push(`email: ${quoteYaml(draft.email)}`);
+  if (draft.dates_start) extras.push(`dates_start: ${draft.dates_start}`);
+  if (draft.dates_end)   extras.push(`dates_end: ${draft.dates_end}`);
+  if (Array.isArray(draft.secondary_teams) && draft.secondary_teams.length) {
+    extras.push(`secondary_teams:\n${draft.secondary_teams.map(t => `  - ${t}`).join("\n")}`);
+  }
+  if (Array.isArray(draft.absences) && draft.absences.length) {
+    const lines = draft.absences.map(a => {
+      const parts = [`    start: ${a.start}`, `    end: ${a.end}`];
+      if (a.note) parts.push(`    note: ${quoteYaml(a.note)}`);
+      return `  -\n${parts.join("\n")}`;
+    });
+    extras.push(`absences:\n${lines.join("\n")}`);
+  }
+  if (Array.isArray(draft.skills) && draft.skills.length) {
+    extras.push(`skills:\n${draft.skills.map(s => `  - ${quoteYaml(s)}`).join("\n")}`);
+  }
+  if (Array.isArray(draft.skill_areas) && draft.skill_areas.length) {
+    extras.push(`skill_areas:\n${draft.skill_areas.map(s => `  - ${s}`).join("\n")}`);
+  }
+  if (Array.isArray(draft.seeking) && draft.seeking.length) {
+    extras.push(`seeking:\n${draft.seeking.map(s => `  - ${quoteYaml(s)}`).join("\n")}`);
+  }
+  if (Array.isArray(draft.offering) && draft.offering.length) {
+    extras.push(`offering:\n${draft.offering.map(s => `  - ${quoteYaml(s)}`).join("\n")}`);
+  }
+  if (Array.isArray(draft.pair_with) && draft.pair_with.length) {
+    extras.push(`pair_with:\n${draft.pair_with.map(s => `  - ${s}`).join("\n")}`);
+  } else if (typeof draft.pair_with === "string" && draft.pair_with) {
+    extras.push(`pair_with: ${quoteYaml(draft.pair_with)}`);
+  }
+  if (draft.now) extras.push(`now: ${yamlScalar(draft.now)}`);
+  const extrasBlock = extras.length ? `\n${extras.join("\n")}` : "";
+
+  const bodyContent = body != null && body.trim() ? body : `\n## bio\n\n(write a short bio here — what you're building, what you're into, what you'd be a good thought partner on)\n`;
   return `---
 record_id: ${slug}
 record_type: person
@@ -4261,18 +4340,33 @@ name: ${quoteYaml(draft.name || "")}
 team: ${draft.team || "null"}
 role: ${quoteYaml(draft.role || "")}
 geo: ${quoteYaml(draft.geo || "")}
-domain: ${draft.domain || "null"}
+domain: ${draft.domain || "null"}${extrasBlock}
 ${linksBlock}
 comm_style: ${yamlScalar(draft.comm_style)}
 contribute_interests: ${yamlScalar(draft.contribute_interests)}
 availability_pref: ${yamlScalar(draft.availability_pref)}
 weekly_intention: ${yamlScalar(draft.weekly_intention)}
 ---
+${bodyContent}`;
+}
 
-## bio
-
-(write a short bio here — what you're building, what you're into, what you'd be a good thought partner on)
-`;
+// Fetch the markdown body (everything after the frontmatter) of a cohort
+// record straight from raw.githubusercontent.com. Used by the EDIT flow
+// so we can rebuild the whole file with mutated frontmatter while
+// preserving the user's prose. Returns `null` on any failure — the
+// caller falls back to the default placeholder body.
+async function fetchExistingBody(path) {
+  const url = `https://raw.githubusercontent.com/dmarzzz/shape-rotator-field-guide/main/${path}?ts=${Date.now()}`;
+  try {
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) return null;
+    const text = await r.text();
+    // Split at the second `---` line. The first opens the frontmatter,
+    // the second closes it; everything that follows is the body.
+    const m = text.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/);
+    if (!m) return null;
+    return m[1];
+  } catch { return null; }
 }
 
 // Compute the diff between the in-progress draft and the loaded
@@ -4376,7 +4470,13 @@ async function submitEditAsPR() {
     return;
   }
 
-  // EDIT mode → /edit/ URL + diff panel.
+  // EDIT mode. We used to send the user to GitHub's /edit/ URL which
+  // shows the existing file — meaning the user had to manually re-apply
+  // their in-app edits in GitHub's web editor. Now we rebuild the full
+  // markdown (mutated frontmatter + preserved body fetched from raw)
+  // and route through GitHub's /new/?value= URL. Because the file
+  // already exists on main, GitHub forces "create new branch + propose
+  // changes" — no accidental commits to main, no manual YAML editing.
   const slug = p.editTargetId;
   if (!slug) {
     result.hidden = false;
@@ -4394,9 +4494,19 @@ async function submitEditAsPR() {
     result.innerHTML = `<div class="aspr-line"><span class="aspr-tag aspr-tag-warn">no changes</span> <span>edit any field above first.</span></div>`;
     return;
   }
-  const patch = buildYamlPatch(diff);
 
-  const launched = await launchPRFlow({ kind: "edit", path: filename });
+  // Painty loading state while we fetch the raw body. The fetch is fast
+  // (~200ms) but worth surfacing so the click doesn't feel dead.
+  result.hidden = false;
+  result.dataset.kind = "loading";
+  result.innerHTML = `<div class="aspr-line"><span class="aspr-tag">preparing</span> <span>building your updated file…</span></div>`;
+
+  const existingBody = await fetchExistingBody(filename);
+  const content = p.editKind === "person"
+    ? buildPersonMarkdown(p.editDraft, slug, existingBody)
+    : buildTeamMarkdown(p.editDraft, slug, p.editKind, existingBody);
+
+  const launched = await launchPRFlow({ kind: "new", path: filename, value: content });
   if (!launched.ok) {
     result.hidden = false;
     result.dataset.kind = "needs-fork";
@@ -4416,31 +4526,15 @@ async function submitEditAsPR() {
   result.hidden = false;
   result.dataset.kind = "diff";
   result.innerHTML = `
-    <div class="aspr-line"><span class="aspr-tag">github opened</span> <span>edit <code>${escHtml(filename)}</code> in the github editor — apply the changes below, then commit + open PR</span></div>
+    <div class="aspr-line"><span class="aspr-tag">github opened</span> <span>your edits are pre-filled. on github: <strong>commit changes</strong> → <strong>propose changes</strong> → <strong>create pull request</strong>.</span></div>
     <div class="aspr-diff">${diffRows}</div>
-    <details class="aspr-patch">
-      <summary>YAML patch (paste-ready)</summary>
-      <pre class="aspr-patch-pre">${escHtml(patch)}</pre>
-      <button type="button" class="alch-feed-btn aspr-copy">copy patch</button>
-    </details>
-    <div class="aspr-line aspr-aux">stewards merge → next <code>npm run build:cohort</code> ships the change to the cohort.</div>
+    <div class="aspr-line aspr-aux">file: <code>${escHtml(filename)}</code> · steward merges → next cohort sync (~5 min) ships your change.</div>
     <div class="aspr-line">
       <button type="button" class="alch-feed-btn aspr-reopen">reopen editor</button>
     </div>
   `;
   const reopen = result.querySelector(".aspr-reopen");
   if (reopen) reopen.addEventListener("click", () => { try { window.api?.openExternal?.(editUrl); } catch {} });
-  const copy = result.querySelector(".aspr-copy");
-  if (copy) {
-    copy.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(patch);
-        const prev = copy.textContent;
-        copy.textContent = "copied";
-        setTimeout(() => { copy.textContent = prev; }, 1400);
-      } catch {}
-    });
-  }
 }
 
 function formatDiffValue(v) {

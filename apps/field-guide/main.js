@@ -126,10 +126,19 @@ function createWindow() {
     if (win.isDestroyed() || win.isMinimized()) return;
     clearTimeout(t);
     t = setTimeout(() => {
+      if (win.isDestroyed()) return;
       writeJSON(WINDOW_STATE, { ...win.getBounds(), fullscreen: win.isFullScreen() });
     }, 250);
   };
-  win.on("resize", save); win.on("move", save); win.on("close", save);
+  // On close, cancel the pending debounce + write synchronously — otherwise
+  // the 250ms timer fires after the window is destroyed and throws.
+  win.on("resize", save);
+  win.on("move", save);
+  win.on("close", () => {
+    clearTimeout(t);
+    if (win.isDestroyed()) return;
+    try { writeJSON(WINDOW_STATE, { ...win.getBounds(), fullscreen: win.isFullScreen() }); } catch {}
+  });
 
   win.webContents.on("console-message", (_e, lvl, msg) => {
     process.stderr.write(`[viz:${["log","warn","error"][lvl]||"log"}] ${msg}\n`);
@@ -166,9 +175,33 @@ function initAutoUpdater() {
     autoUpdater.on("error", (err) => process.stderr.write(`[viz:warn] updater error: ${err && err.message}\n`));
     autoUpdater.on("update-available", (info) => process.stderr.write(`[viz:log] update available: ${info && info.version}\n`));
     autoUpdater.on("update-not-available", () => process.stderr.write(`[viz:log] no update available\n`));
-    autoUpdater.on("download-progress", (p) => process.stderr.write(`[viz:log] downloading update: ${Math.round(p.percent || 0)}%\n`));
+    autoUpdater.on("download-progress", (p) => {
+      process.stderr.write(`[viz:log] downloading update: ${Math.round(p.percent || 0)}%\n`);
+      // Forward to the renderer so the inline update panel can render a
+      // live % bar. The field-guide only ever has one window, so first-of
+      // is fine; guard for "no window yet" (the updater can technically
+      // fire before the renderer is created if a check is triggered early).
+      try {
+        const win = BrowserWindow.getAllWindows()[0];
+        if (win && !win.isDestroyed()) win.webContents.send("fg:update-progress", {
+          percent: p.percent || 0,
+          bytesPerSecond: p.bytesPerSecond || 0,
+          transferred: p.transferred || 0,
+          total: p.total || 0,
+        });
+      } catch {}
+    });
     autoUpdater.on("update-downloaded", (info) => process.stderr.write(`[viz:log] update downloaded: ${info && info.version}\n`));
-    autoUpdater.checkForUpdates().catch(() => {});
+    // Defer the first check ~30s so it doesn't race the boot-path fetch to swf-node on 127.0.0.1:7777.
+    // Then re-check every 6h so long-running sessions still notice new releases.
+    setTimeout(() => {
+      try { autoUpdater.checkForUpdates().catch((err) => process.stderr.write(`[viz:warn] updater check failed: ${err && err.message}\n`)); }
+      catch (e) { process.stderr.write(`[viz:warn] updater check threw: ${e.message}\n`); }
+      setInterval(() => {
+        try { autoUpdater.checkForUpdates().catch((err) => process.stderr.write(`[viz:warn] updater check failed: ${err && err.message}\n`)); }
+        catch (e) { process.stderr.write(`[viz:warn] updater check threw: ${e.message}\n`); }
+      }, 6 * 60 * 60 * 1000);
+    }, 30 * 1000);
   } catch (e) {
     process.stderr.write(`[viz:warn] electron-updater init failed: ${e.message}\n`);
   }
@@ -283,6 +316,13 @@ ipcMain.handle("fg:export-calendar", async (_e, opts = {}) => {
 });
 
 app.whenReady().then(() => {
+  // Dev-mode dock icon. Packaged builds get their icon from electron-builder
+  // (build-resources/icon.icns); in `npm run field-guide` we'd otherwise see
+  // the generic Electron dock icon. Set it explicitly here.
+  if (process.platform === "darwin" && !app.isPackaged && app.dock) {
+    try { app.dock.setIcon(path.join(__dirname, "build-resources", "icon.png")); }
+    catch (e) { process.stderr.write(`[viz:warn] dock icon set failed: ${e && e.message}\n`); }
+  }
   createWindow();
   initAutoUpdater();
   app.on("activate", () => {
