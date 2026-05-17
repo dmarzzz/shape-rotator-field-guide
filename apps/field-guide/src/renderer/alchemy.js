@@ -67,7 +67,7 @@ const state = {
   container: null,
   canvas: null,
   rail: null,
-  mode: "feed",
+  mode: "shapes",  // default rail landing — feed used to be first, now lives at the bottom
   shapesKindFilter: "works",  // "works" (teams + projects) | "people"
   detailRecordId: null,     // when set, the alchemy canvas renders the full detail page for this team/project
   detailReturnMode: null,   // remembered so the back button knows where to land
