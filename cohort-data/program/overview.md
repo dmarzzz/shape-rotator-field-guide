@@ -40,16 +40,6 @@ three success vectors, applied differently per project:
 
 success looks different per cluster: for-profit / commercial-viability track, growth track (delayed gratification, hockey-stick organic), open-source / commons (sustainability + distribution).
 
-## who runs it
-
-- **andrew miller** · program lead · IC3 co-director
-- **tina zhen** · program architect · ex-flashbots
-- **dmarz** · coordinator · convent / flashbots
-- **alexis bednarick** · people ops · personal coach side, vibe + social activities, environment
-- **vishesh choudhry** · PMF + go-to-market advisor
-
-paper-author drop-ins (advisor track, bounded engagement): james austgen, mariarosaria barbaraci, roi bar-zur, sen yang, jasleen malvai, hongyin, ioannis kaklamanis, f-x wicht.
-
 ## what makes this different
 
 - **research-to-product, not research-to-paper.** the cohort is selected for "researchers / builders willing to ship," not the academic side.
