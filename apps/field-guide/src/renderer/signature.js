@@ -104,11 +104,20 @@ function swapPaletteGlyph() {
 
 // ─── launch overlay ──────────────────────────────────────────────────────
 
-export function mountLaunchOverlay() {
+// mountLaunchOverlay({ progressive: true }) keeps the splash visible
+// until boot.js explicitly calls .ready(). Returns a controller:
+//   .setStatus(text, pct)   update the progress line + bar (pct: 0..1)
+//   .ready()                fade out (used when init finished)
+//   .skip()                 fade out immediately (Esc/click bypass)
+// Falls back to the legacy auto-timeout when called without args, so
+// any pre-existing call site keeps working unchanged.
+export function mountLaunchOverlay(opts = {}) {
+  const progressive = !!opts.progressive;
   const onboarded = localStorage.getItem(ONBOARDED_KEY) === "1";
   const reduced = reducedMotion();
   const overlay = document.createElement("div");
   overlay.className = "sig-launch";
+  if (progressive) overlay.classList.add("sig-launch-progressive");
   overlay.setAttribute("aria-hidden", "true");
   overlay.innerHTML = `
     <div class="sig-launch-stage">
@@ -127,10 +136,19 @@ export function mountLaunchOverlay() {
       <div class="sig-launch-word" data-text="SHAPE ROTATOR">
         <span class="sig-launch-word-inner">SHAPE ROTATOR</span>
       </div>
-      <div class="sig-launch-sub">world knowledge</div>
+      <div class="sig-launch-sub">operating system</div>
+      <div class="sig-launch-progress" aria-hidden="${progressive ? "false" : "true"}">
+        <div class="sig-launch-progress-status">warming up</div>
+        <div class="sig-launch-progress-bar">
+          <div class="sig-launch-progress-fill"></div>
+        </div>
+      </div>
     </div>
   `;
   document.body.appendChild(overlay);
+
+  const shownAt = performance.now();
+  const MIN_DISPLAY_MS = onboarded ? 360 : 1100;  // never flash; let first-launch animation breathe
 
   let torndown = false;
   // Single teardown path — fade overlay AND remove the global listener.
@@ -152,16 +170,33 @@ export function mountLaunchOverlay() {
     else setTimeout(cleanup, 380);
   };
 
-  // Reduced motion or already onboarded: snap to final pose, fade out
-  // quick. We still show the wordmark briefly so the user gets a beat
-  // of identity.
+  // Honor a minimum display time so the splash doesn't flash on fast
+  // boots. If boot finishes before MIN_DISPLAY_MS, ready() schedules the
+  // skip at the right moment.
+  const ready = () => {
+    const elapsed = performance.now() - shownAt;
+    const remaining = Math.max(0, MIN_DISPLAY_MS - elapsed);
+    setTimeout(skip, remaining);
+  };
+
+  const statusEl = overlay.querySelector(".sig-launch-progress-status");
+  const fillEl   = overlay.querySelector(".sig-launch-progress-fill");
+  const setStatus = (text, pct) => {
+    if (statusEl && typeof text === "string") statusEl.textContent = text;
+    if (fillEl && typeof pct === "number") {
+      const clamped = Math.max(0, Math.min(1, pct));
+      fillEl.style.width = `${(clamped * 100).toFixed(1)}%`;
+    }
+  };
+
   if (reduced || onboarded) {
     overlay.classList.add("sig-launch-quick");
     requestAnimationFrame(() => overlay.classList.add("sig-launch-shown"));
-    setTimeout(skip, onboarded ? 380 : 220);
+    // Progressive mode: caller will call ready(); legacy mode: auto-skip.
+    if (!progressive) setTimeout(skip, onboarded ? 380 : 220);
   } else {
     requestAnimationFrame(() => overlay.classList.add("sig-launch-running"));
-    setTimeout(skip, 1900);  // slightly past the final beat for a clean fade
+    if (!progressive) setTimeout(skip, 1900);  // legacy auto-timeout
   }
 
   // Skippable on Esc / pointerdown / Enter — the visualizer is a tool, not a
@@ -178,7 +213,7 @@ export function mountLaunchOverlay() {
   const onPointer = () => skip();
   window.addEventListener("keydown", onKey, { once: false });
   overlay.addEventListener("pointerdown", onPointer, { once: true });
-  return skip;
+  return { skip, ready, setStatus };
 }
 
 // Force a re-launch (Easter-egg / debug command). Resets the onboarded

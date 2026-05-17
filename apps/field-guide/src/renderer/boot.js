@@ -188,8 +188,23 @@ async function boot() {
   // Signature first-launch animation — the rotor glyph assembles from
   // four scattered dots and the SHAPE ROTATOR wordmark resolves. Lives
   // in signature.js. Skippable on Esc / Enter / pointerdown / Space.
-  // After the first run the same overlay shows a 220ms quick fade.
-  mountLaunchOverlay();
+  //
+  // We use the progressive variant: the overlay stays up until the first
+  // tab finishes mounting (alchemy.notifyDataChanged), with a status line
+  // + progress bar reflecting what we're doing. A global handle on
+  // window.__srfgLaunch lets distant code paths (alchemy mount) advance
+  // the bar without threading it through every function. An 8s hard
+  // timeout exists as a safety net so a slow / stuck scrape can never
+  // hold the UI hostage.
+  const launch = mountLaunchOverlay({ progressive: true });
+  launch.setStatus("warming the cache", 0.08);
+  window.__srfgLaunch = launch;
+  setTimeout(() => {
+    if (window.__srfgLaunch) {
+      try { window.__srfgLaunch.skip(); } catch {}
+      window.__srfgLaunch = null;
+    }
+  }, 8000);
   mountTitlebarMark();
   mountPaletteMark();
 
@@ -4880,11 +4895,26 @@ function applyActiveTab(tab) {
       const stage = document.getElementById("alchemy-view");
       if (!stage) return;
       try {
+        // First mount of the alchemy tab is what the progressive launch
+        // overlay (boot.js: mountLaunchOverlay) is waiting on. Advance
+        // the status bar before mount, then call ready() once the first
+        // data-driven render has been kicked off so the splash dismisses
+        // on a real handoff rather than a guess.
+        const launch = window.__srfgLaunch;
+        if (launch?.setStatus) launch.setStatus("mounting cohort view", 0.80);
         Alchemy.mount(stage);
         Alchemy.setActive(true);
-        requestAnimationFrame(() => Alchemy.notifyDataChanged());
+        requestAnimationFrame(() => {
+          Alchemy.notifyDataChanged();
+          if (launch?.ready) {
+            launch.setStatus("ready", 1.0);
+            launch.ready();
+            window.__srfgLaunch = null;
+          }
+        });
       } catch (e) {
         console.error("[alchemy] mount failed:", e);
+        try { window.__srfgLaunch?.skip(); window.__srfgLaunch = null; } catch {}
       }
     });
   } else {
